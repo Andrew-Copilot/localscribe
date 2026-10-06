@@ -92,6 +92,31 @@ jobs:
             } catch { Start-Sleep -Seconds 2 }
           }
           if (-not $ok) { throw "Server never responded" }
+      - name: Smoke test - Visual C++ runtime bundled, CPU transcription with VAD runs
+        shell: pwsh
+        run: |
+          $install = "$env:LOCALAPPDATA\Programs\Local Scribe"
+          foreach ($dll in @("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+            if (-not (Test-Path "$install\python\$dll")) { throw "$dll is not bundled" }
+          }
+          $py = "$env:LOCALAPPDATA\Local Scribe\.venv\Scripts\python.exe"
+          # The first-launch pip install finished before the server answered.
+          # This exercises the native code the server check never touches:
+          # onnxruntime (Silero VAD) and CTranslate2 inference on CPU.
+          & $py -c @"
+          import sys
+          sys.path.insert(0, r'$install\app')
+          from app import winlibs
+          print('dll probe:', winlibs.probe())
+          import numpy as np
+          from faster_whisper import WhisperModel
+          model = WhisperModel('tiny', device='cpu', compute_type='int8')
+          t = np.arange(16000 * 3, dtype=np.float32) / 16000
+          audio = (0.1 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+          segments, info = model.transcribe(audio, vad_filter=True)
+          print('segments:', len(list(segments)), 'language:', info.language)
+          "@
+          if ($LASTEXITCODE -ne 0) { throw "CPU transcription smoke test failed" }
       - name: Stop the app
         if: always()
         shell: pwsh

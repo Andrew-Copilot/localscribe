@@ -34,6 +34,15 @@ class Cancelled(Exception):
     """Raised inside the transcription loop when the job is cancelled."""
 
 
+def _is_missing_gpu_library(exc: BaseException) -> bool:
+    """True for CTranslate2's 'cublas64_12.dll is not found' family of errors."""
+    text = str(exc).lower()
+    if "cublas" in text or "cudnn" in text:
+        return True
+    return ".dll" in text and ("not found" in text or "cannot be loaded" in text
+                               or "could not locate" in text)
+
+
 # ---------------------------------------------------------------------------
 # Throughput tracking
 # ---------------------------------------------------------------------------
@@ -144,12 +153,18 @@ class WhisperEngine:
         self._loaded_compute = ""
         self._backend = "ctranslate2"   # ctranslate2 | mlx
         self._load_seconds = 0.0
+        # Set when CUDA failed mid-transcription. CTranslate2 keeps its
+        # library state for the life of the process, so CUDA stays off until
+        # Local Scribe restarts even if a later probe looks healthy.
+        self.cuda_runtime_failed = False
 
     # -- hardware ----------------------------------------------------------
 
     def hardware(self, refresh: bool = False) -> dict:
         if self._hardware is None or refresh:
             self._hardware = catalog.probe_hardware()
+            if self.cuda_runtime_failed:
+                self._hardware["cuda_usable"] = False
         return self._hardware
 
     def resolve_device(self) -> tuple[str, int | None]:
@@ -428,7 +443,7 @@ class WhisperEngine:
                 "(pip install -r requirements.txt). "
                 f"Original error: {text}"
             )
-        if device == "cuda" and ("cudnn" in lowered or "cublas" in lowered):
+        if device == "cuda" and _is_missing_gpu_library(exc):
             return (
                 "The model could not load on the GPU because a CUDA support "
                 "library is missing. Use 'Install GPU support' in AI Settings, "
@@ -441,6 +456,14 @@ class WhisperEngine:
                 "is older than the CUDA 12 runtime requires. Update the driver "
                 "or set Device to CPU. "
                 f"Original error: {text}"
+            )
+        if ".dll" in lowered or "dll load failed" in lowered:
+            return (
+                "The model could not load because a Windows system library is "
+                "missing. Install the Microsoft Visual C++ 2015-2022 "
+                "Redistributable (x64) from "
+                "https://aka.ms/vs/17/release/vc_redist.x64.exe and restart "
+                f"Local Scribe. Original error: {text}"
             )
         if "unsupported" in lowered and "compute" in lowered:
             return (
@@ -538,7 +561,74 @@ class WhisperEngine:
         ``audio`` is a float32 mono 16 kHz numpy array. Passing decoded samples
         rather than a path means the media layer owns all format handling and
         the engine never needs to know what a .mkv is.
+
+        If the GPU turns out to be missing a CUDA library at the first
+        computation (CTranslate2 loads cuBLAS/cuDNN lazily, so this can only
+        surface here), the job is retried once on CPU instead of failing.
         """
+        emitted = 0
+
+        def counting(index, segment, tracker):
+            nonlocal emitted
+            emitted += 1
+            if on_segment is not None:
+                on_segment(index, segment, tracker)
+
+        try:
+            return self._transcribe_once(
+                audio, duration=duration, overrides=overrides,
+                on_segment=counting, should_cancel=should_cancel,
+            )
+        except Cancelled:
+            raise
+        except Exception as exc:
+            if not (
+                self._backend == "ctranslate2"
+                and self._loaded_device.startswith("cuda")
+                and emitted == 0
+                and _is_missing_gpu_library(exc)
+            ):
+                if not isinstance(exc, EngineError) and "dll" in str(exc).lower():
+                    # e.g. onnxruntime (voice activity filter) without the
+                    # Visual C++ runtime: say what to install, not just why.
+                    raise EngineError(
+                        self._explain_load_failure(exc, self._loaded_device, self._loaded_compute)
+                    ) from exc
+                raise
+            self._disable_cuda(exc)
+
+        return self._transcribe_once(
+            audio, duration=duration, overrides=overrides,
+            on_segment=on_segment, should_cancel=should_cancel,
+        )
+
+    def _disable_cuda(self, exc: Exception) -> None:
+        """Stop using CUDA for the rest of this session after a runtime failure."""
+        self.cuda_runtime_failed = True
+        hw = self.hardware()
+        hw["cuda_usable"] = False
+        warning = (
+            "The GPU is missing a CUDA support library (cuBLAS 12 or cuDNN 9), "
+            "so transcription has switched to CPU for this session. Use "
+            "'Install GPU support' in AI Settings, then restart Local Scribe, "
+            "to use the GPU. "
+            f"Original error: {exc}"
+        )
+        if warning not in hw.setdefault("warnings", []):
+            hw["warnings"].append(warning)
+        CONSOLE.warn(warning)
+        self.unload()
+        CONSOLE.step("Retrying transcription on CPU")
+
+    def _transcribe_once(
+        self,
+        audio,
+        *,
+        duration: float,
+        overrides: dict | None = None,
+        on_segment=None,
+        should_cancel=None,
+    ) -> dict:
         model = self.ensure_loaded()
         params = self.transcribe_params(overrides)
 

@@ -2,5 +2,7 @@
 # Installed on demand from AI Settings -> "Install GPU support".
 # CTranslate2 4.x requires cuBLAS 12 and cuDNN 9; shipping them via pip avoids
 # requiring a system-wide CUDA toolkit install.
-nvidia-cublas-cu12
-nvidia-cudnn-cu12
+# app/winlibs.py adds site-packages/nvidia/*/bin to the DLL search path on
+# Windows so CTranslate2 can find them.
+nvidia-cublas-cu12>=12.4,<13
+nvidia-cudnn-cu12>=9.1,<10

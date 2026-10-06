@@ -34,6 +34,19 @@ The permission grant, in summary:
 `app/data/dictionary/transcript-supplement.txt` is original to Local Scribe and
 covered by this project's MIT licence.
 
+## Windows installer: Microsoft Visual C++ runtime
+
+The Windows installer places the Microsoft Visual C++ 2015-2022
+redistributable DLLs (`msvcp140*.dll`, `vcruntime140*.dll`, `concrt140.dll`)
+beside its bundled `python.exe`. The native packages installed on first launch
+need them. They are redistributed app-locally under the Microsoft Visual Studio
+redistributable terms ("Distributable Code"), and remain © Microsoft
+Corporation.
+
+On request, the optional "Install GPU support" step downloads NVIDIA's
+`nvidia-cublas-cu12` and `nvidia-cudnn-cu12` wheels from PyPI. They fall under
+NVIDIA's own licence terms and are never bundled.
+
 ## Runtime dependencies
 
 Installed from PyPI into `.venv`; not redistributed in this repository.

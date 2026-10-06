@@ -254,6 +254,18 @@ GPU, open AI Settings — the hardware panel explains why the GPU is unavailable
 The usual causes are a missing CUDA support library (there is an install
 button) or an NVIDIA driver older than 527.
 
+**Windows: transcription fails with a missing `.dll` (for example `cublas64_12.dll`, `cudnn_ops64_9.dll` or `msvcp140.dll`).**
+On an NVIDIA PC, the GPU needs two CUDA libraries, cuBLAS 12 and cuDNN 9,
+which a fresh Windows install does not include. Local Scribe now checks for
+them before choosing the GPU, and switches to CPU automatically if one is still
+missing once transcription starts. To use the GPU, click **Install GPU
+support** in AI Settings, then restart Local Scribe. If the missing file is
+`msvcp140.dll` or another `vcruntime`/`msvcp` file, install the
+[Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+and restart. The installer bundles these files, so this should only affect
+source installs. Startup problems are logged to
+`%LOCALAPPDATA%\Local Scribe\logs\bootstrap.log` and `localscribe.log`.
+
 **The audio will not play in the editor.**
 Formats such as `.mkv`, `.avi` and `.wmv` cannot be played by a browser, so a
 small `.m4a` companion is generated during transcription. If it is missing,
@@ -272,6 +284,8 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_assets        # front-end asset guards
 .venv/Scripts/python.exe -m tests.test_speakers      # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts
+.venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery
+.venv/Scripts/python.exe -m tests.test_engine_fallback  # GPU-to-CPU fallback
 ```
 
 On macOS and Linux use `.venv/bin/python` instead.

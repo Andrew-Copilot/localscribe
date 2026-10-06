@@ -17,6 +17,7 @@ import subprocess
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
+from . import winlibs
 from .config import PATHS
 
 # ---------------------------------------------------------------------------
@@ -399,8 +400,6 @@ def probe_hardware() -> dict:
     roughly 525 or newer. Older drivers fail at runtime with a message no
     researcher should have to decode, so it is caught and explained here.
     """
-    import ctranslate2
-
     info: dict = {
         "cpu_cores": os.cpu_count() or 1,
         "cpu_compute_types": [],
@@ -419,6 +418,14 @@ def probe_hardware() -> dict:
     if info["apple_silicon"]:
         info["mlx_available"] = _mlx_available()
         info["unified_memory_gb"] = _apple_unified_memory_gb()
+
+    try:
+        import ctranslate2
+    except Exception as exc:
+        # On Windows this is almost always a missing Visual C++ runtime.
+        # Report it instead of taking the whole server down with it.
+        info["warnings"].append(_explain_import_failure("ctranslate2", exc))
+        return info
 
     try:
         info["cpu_compute_types"] = sorted(
@@ -445,6 +452,20 @@ def probe_hardware() -> dict:
         except Exception as exc:
             info["cuda_usable"] = False
             info["warnings"].append(_explain_cuda_failure(str(exc), driver))
+
+        # The calls above only need the NVIDIA driver. cuBLAS and cuDNN are
+        # loaded lazily on the first GPU computation, i.e. once transcription
+        # has already started, so check they are loadable now.
+        absent = winlibs.missing(winlibs.CUDA_DLLS)
+        if info["cuda_usable"] and absent:
+            info["cuda_usable"] = False
+            names = ", ".join(sorted(set(gpu_names))) or "NVIDIA GPU"
+            info["warnings"].append(
+                f"{names} detected, but the CUDA support libraries are "
+                f"missing ({', '.join(absent)}). This is usually a missing "
+                "cuDNN 9 or cuBLAS 12 library. Use 'Install GPU support' in "
+                "AI Settings to add them. Transcription runs on CPU until then."
+            )
     elif gpu_names:
         names = ", ".join(sorted(set(gpu_names)))
         count = len(gpu_names)
@@ -570,6 +591,25 @@ def _query_nvidia_smi() -> tuple[list[str], str | None]:
         if len(parts) > 1 and parts[1]:
             driver = parts[1]
     return names, driver
+
+
+def _explain_import_failure(package: str, exc: Exception) -> str:
+    text = str(exc)
+    if winlibs.IS_WINDOWS and "dll" in text.lower():
+        absent = winlibs.missing(winlibs.VCRUNTIME_DLLS)
+        detail = f" Missing: {', '.join(absent)}." if absent else ""
+        return (
+            f"The transcription engine ({package}) could not load a Windows "
+            f"system library.{detail} Install the Microsoft Visual C++ "
+            "2015-2022 Redistributable (x64) from "
+            "https://aka.ms/vs/17/release/vc_redist.x64.exe and restart "
+            f"Local Scribe. Original error: {text}"
+        )
+    return (
+        f"The transcription engine ({package}) could not be imported, so "
+        "transcription is unavailable. Reinstalling Local Scribe usually "
+        f"fixes this. Original error: {text}"
+    )
 
 
 def _explain_cuda_failure(message: str, driver: str | None) -> str:

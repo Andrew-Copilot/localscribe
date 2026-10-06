@@ -175,7 +175,12 @@
 
       try {
         const result = await LS.post('/api/engine/gpu-support');
-        if (result.hardware.cuda_usable) {
+        if (result.restart_required) {
+          LS.toast(
+            'GPU support installed. Restart Local Scribe to enable the GPU.',
+            'ok', 15000);
+          installGpu.textContent = 'Installed - restart to enable';
+        } else if (result.hardware.cuda_usable) {
           LS.toast('GPU support installed. CUDA is now available.', 'ok', 9000);
           setTimeout(() => location.reload(), 1200);
         } else {

@@ -9,6 +9,10 @@ python-multipart>=0.0.9
 # ASR runtime: CTranslate2 execution of OpenAI Whisper weights.
 # Pulls ctranslate2, av (bundled ffmpeg libs), tokenizers, huggingface-hub, onnxruntime.
 faster-whisper>=1.1.0,<2.0
+# Held to the cuDNN 9 / CUDA 12 generation explicitly: CTranslate2 4.5 moved
+# from cuDNN 8 to 9 without a major bump, and requirements-gpu.txt and
+# app/winlibs.py look for exactly the cuBLAS 12 / cuDNN 9 DLL names.
+ctranslate2>=4.5,<5
 
 # ASR runtime, Apple Silicon GPU: MLX execution of Whisper weights on the
 # Mac's own GPU through unified memory. Small, pure-native wheels published

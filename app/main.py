@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import catalog, exporters, media, proofread, projects, update_check
+from . import catalog, exporters, media, proofread, projects, update_check, winlibs
 from .config import (
     APP_NAME,
     HOST,
@@ -129,6 +129,13 @@ async def on_startup() -> None:
 
     CONSOLE.success(f"{APP_NAME} {app_version()} started", port=PORT, host=HOST)
     CONSOLE.info(f"Interface available at http://{HOST}:{PORT}")
+
+    if winlibs.IS_WINDOWS:
+        CONSOLE.debug(
+            "Native library check",
+            loadable=winlibs.probe(),
+            search_dirs=winlibs.search_dirs(),
+        )
 
     status = ENGINE.status()
     for warning in status["warnings"]:
@@ -503,16 +510,27 @@ async def api_install_gpu_support():
                    "for details.",
         )
 
+    winlibs.prepare()  # put the new site-packages/nvidia/*/bin on the path
     hardware = ENGINE.hardware(refresh=True)
     ENGINE.unload()
-    if hardware.get("cuda_usable"):
+    restart_required = ENGINE.cuda_runtime_failed
+    if restart_required:
+        CONSOLE.warn(
+            "GPU support installed. Restart Local Scribe to start using the "
+            "GPU; this session already fell back to CPU."
+        )
+    elif hardware.get("cuda_usable"):
         CONSOLE.success("GPU support installed and CUDA is now usable.")
     else:
         CONSOLE.warn(
             "GPU libraries installed, but CUDA is still unavailable. "
             + " ".join(hardware.get("warnings") or [])
         )
-    return {"engine": ENGINE.status(), "hardware": hardware}
+    return {
+        "engine": ENGINE.status(),
+        "hardware": hardware,
+        "restart_required": restart_required,
+    }
 
 
 @app.get("/api/update-check")

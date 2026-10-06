@@ -30,7 +30,7 @@ if (Test-Path $Build) { Remove-Item -Recurse -Force $Build }
 New-Item -ItemType Directory -Force -Path "$Build\app" | Out-Null
 
 Write-Host "==> Copying app source"
-foreach ($item in @("app", "bootstrap.py", "requirements.txt", "VERSION", "LICENSE")) {
+foreach ($item in @("app", "bootstrap.py", "requirements.txt", "requirements-gpu.txt", "VERSION", "LICENSE")) {
     Copy-Item -Recurse -Force (Join-Path $Root $item) (Join-Path "$Build\app" $item)
 }
 
@@ -61,6 +61,37 @@ tar -xzf $Archive -C "$Build\app"
 Remove-Item -Force $Archive
 # python-build-standalone extracts to a top-level "python\" directory.
 Move-Item "$Build\app\python" "$Build\python"
+
+Write-Host "==> Bundling the Visual C++ runtime next to python.exe"
+# The native wheels installed on first launch (onnxruntime for the voice
+# activity filter, ctranslate2, av) link against the Visual C++ 2015-2022
+# runtime. python-build-standalone ships only vcruntime140*.dll, and a clean
+# Windows install may have no msvcp140.dll at all - the result was a "DLL
+# not found" the moment transcription started. Microsoft permits app-local
+# deployment of these redistributable files; placing them beside python.exe
+# puts them first on the DLL search path for every extension module, and
+# keeps the installer per-user with no admin prompt for vc_redist.exe.
+$CrtDir = $null
+$VsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $VsWhere) {
+    $VsPath = & $VsWhere -latest -products * -property installationPath
+    if ($VsPath) {
+        $CrtDir = Get-ChildItem -Path (Join-Path $VsPath "VC\Redist\MSVC") -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-ChildItem -Path (Join-Path $_.FullName "x64") -Directory -Filter "Microsoft.VC*.CRT" -ErrorAction SilentlyContinue } |
+            Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+    }
+}
+if (-not $CrtDir) { $CrtDir = Join-Path $env:SystemRoot "System32" }
+Write-Host "    from $CrtDir"
+foreach ($Dll in @("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+                   "vcruntime140.dll", "vcruntime140_1.dll", "concrt140.dll")) {
+    $Src = Join-Path $CrtDir $Dll
+    if (Test-Path $Src) {
+        Copy-Item -Force $Src (Join-Path "$Build\python" $Dll)
+    } elseif (-not (Test-Path (Join-Path "$Build\python" $Dll))) {
+        throw "Visual C++ runtime file $Dll not found in $CrtDir"
+    }
+}
 
 Write-Host "==> Writing launcher"
 # Sets the per-user data directory (so projects/models/settings survive an

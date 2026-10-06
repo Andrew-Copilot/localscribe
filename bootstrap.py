@@ -77,6 +77,17 @@ PBS_PREFERRED = tuple(v for v in SUPPORTED if v != (3, 10))
 # ---------------------------------------------------------------------------
 
 def say(message: str = "") -> None:
+    if sys.stdout is None:
+        # pythonw.exe (the packaged Windows launcher) has no console, so
+        # anything printed here would vanish. Keep it in a file instead so a
+        # failed first launch can still be diagnosed.
+        try:
+            LOGS.mkdir(parents=True, exist_ok=True)
+            with open(LOGS / "bootstrap.log", "a", encoding="utf-8") as fh:
+                fh.write(message + "\n")
+        except OSError:
+            pass
+        return
     print(message, flush=True)
 
 
