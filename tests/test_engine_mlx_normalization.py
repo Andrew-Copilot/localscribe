@@ -117,14 +117,20 @@ def test_segments_from_result_offsets_timestamps():
 def test_ensure_weight_filename_aliases_a_single_oddly_named_file():
     with tempfile.TemporaryDirectory() as tmp:
         (Path(tmp) / "config.json").write_text("{}")
-        (Path(tmp) / "model.safetensors").write_bytes(b"fake weights")
+        real = Path(tmp) / "model.safetensors"
+        real.write_bytes(b"fake weights")
         M._ensure_weight_filename(tmp)
         alias = Path(tmp) / "weights.safetensors"
         check("alias created", alias.exists())
-        check(
-            "alias points at the real weight file",
-            alias.resolve().name == "model.safetensors",
-        )
+        # _ensure_weight_filename() symlinks where permitted (macOS/Linux) and
+        # falls back to a copy where it is not (Windows without Developer Mode
+        # or admin rights raises WinError 1314). Either way the alias must
+        # expose the real weight file's bytes; a symlink must also target it.
+        if alias.is_symlink():
+            points_at_real = alias.resolve() == real.resolve()
+        else:
+            points_at_real = alias.is_file() and alias.read_bytes() == real.read_bytes()
+        check("alias points at the real weight file", points_at_real)
 
 
 def test_ensure_weight_filename_is_a_noop_when_expected_name_present():
