@@ -11,7 +11,7 @@
     <p class="small muted">
       {{ stats.documents }} file{{ '' if stats.documents == 1 else 's' }}
       {% if stats.duration %} &middot; {{ (stats.duration / 60)|round(1) }} minutes of audio{% endif %}
-      {% if stats.words %} &middot; {{ '{:,}'.format(stats.words) }} words transcribed{% endif %}
+      {% if stats.words %} &middot; {{ '{:,}'.format(stats.words) }} words of finished text{% endif %}
       &middot; created {{ project.created[:10] }}
     </p>
   </div>
@@ -97,19 +97,68 @@
   <p class="small muted" id="upload-status"></p>
 </div>
 
-<!-- Files + the prominent Transcribe action -->
+<!-- Files + the prominent action (Transcribe or Translate to English) -->
 <div class="card">
   <div class="row" style="margin-bottom:.8rem">
     <h2 style="margin:0">Recordings</h2>
     <span class="badge" id="doc-count">{{ stats.documents }}</span>
     <div class="spacer"></div>
     <button type="button" class="btn btn-quiet btn-small" id="refresh-btn">Refresh</button>
+  </div>
+
+  <!-- What to do. Saved per project; changing it never touches finished results. -->
+  <fieldset class="op-picker" id="operation-picker">
+    <legend>What do you want to do?</legend>
+    <div class="row">
+      <label class="chk op-choice">
+        <input type="radio" name="operation" value="transcribe"
+               {% if operation == 'transcribe' %}checked{% endif %}>
+        <span class="op-text"><strong>Transcribe</strong>
+          <span class="small muted">Write what was said, in the language spoken</span></span>
+      </label>
+      <label class="chk op-choice">
+        <input type="radio" name="operation" value="translate"
+               {% if operation == 'translate' %}checked{% endif %}>
+        <span class="op-text"><strong>Translate to English</strong>
+          <span class="small muted">Machine-translate speech in any language into English text</span></span>
+      </label>
+    </div>
+  </fieldset>
+
+  <div class="row" style="margin:.4rem 0 .6rem">
+    <label for="language-select" title="The language spoken in the recordings">Spoken language</label>
+    <select id="language-select" style="width:auto;max-width:16rem"
+            aria-describedby="op-summary">
+      {% for choice in language_choices %}
+      <option value="{{ choice.value }}" {% if choice.value == default_language %}selected{% endif %}>{{ choice.label }}</option>
+      {% endfor %}
+    </select>
+    <div class="spacer"></div>
     <button type="button" class="btn btn-transcribe btn-big" id="transcribe-btn"
       {% if not stats.pending and not stats.documents %}disabled{% endif %}>
-      Transcribe
+      {{ terms.action }}
       {% if stats.pending %}<span class="badge badge-ok">{{ stats.pending }}</span>{% endif %}
     </button>
   </div>
+
+  <p class="small" id="op-summary" role="status" aria-live="polite" style="margin:.2rem 0 .6rem">
+    <strong>{{ terms.name }}.</strong> {{ terms.explain }}
+    Spoken language: {% for c in language_choices %}{% if c.value == default_language %}{{ c.label }}{% endif %}{% endfor %}.
+    You will get: {{ terms.output }}.
+    Model: {{ operation_info.model.label }}{% if not operation_info.compat[operation].ok %} (not suitable for this){% endif %}.
+  </p>
+
+  <div id="op-note" class="notice notice-warn small" role="status" aria-live="polite" hidden></div>
+
+  <p class="small muted" id="language-help" style="margin:.2rem 0 .8rem">
+    Leave the language on automatic detection unless a recording opens with
+    music, noise or another language, or the wrong language is detected; then
+    choose it here. The operation and the language apply to every file started
+    from this page and are remembered for this project only. New projects start
+    from the defaults in AI Settings. Files that already have a result are not
+    changed unless you confirm replacing them, and the earlier result is kept in
+    that recording's Edit history.
+  </p>
 
   <div id="queue-note" class="notice notice-info small" hidden></div>
 
@@ -131,7 +180,7 @@
 
   <div class="empty" id="no-docs" hidden>
     <h3>No recordings yet</h3>
-    <p>Add audio or video files above, then press Transcribe.</p>
+    <p id="empty-hint">{{ terms.empty_hint }}</p>
   </div>
 </div>
 {% endblock %}
@@ -142,6 +191,8 @@
     slug: {{ project.slug|tojson }},
     documents: {{ documents|tojson }},
     stats: {{ stats|tojson }},
+    operation: {{ operation|tojson }},
+    info: {{ operation_info|tojson }},
   };
 </script>
 <script src="/static/js/project.js"></script>

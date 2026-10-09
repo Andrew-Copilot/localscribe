@@ -237,6 +237,17 @@ textarea { resize: vertical; min-height: 4.5rem; font-family: var(--sans); }
 .chk { display: inline-flex; align-items: center; gap: .35rem; font-weight: 500; }
 .chk input { margin: 0; }
 
+/* Transcribe / Translate to English picker on the project page. */
+.op-picker { border: 0; margin: 0 0 .5rem; padding: 0; min-width: 0; }
+.op-picker legend { font-weight: 600; margin-bottom: .35rem; padding: 0; }
+.op-choice {
+  border: 1px solid var(--line); border-radius: 8px; padding: .5rem .75rem;
+  background: var(--surface); cursor: pointer; align-items: flex-start;
+}
+.op-choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.op-choice:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.op-choice .op-text { display: flex; flex-direction: column; }
+
 input[type=range] { width: 100%; accent-color: var(--accent); }
 .slider-row { display: flex; align-items: center; gap: .6rem; }
 .slider-row input[type=range] { flex: 1 1 auto; }

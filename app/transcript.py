@@ -13,6 +13,7 @@ Shape
       "schema": 3,
       "created": "...", "updated": "...",
       "language": "en", "language_probability": 0.99,
+      "language_requested": "auto",   # what the user asked for: "auto" or a code
       "duration": 3612.4,
       "model": "large-v3-turbo",
       "engine": {...},          # settings actually used, for reproducibility
@@ -53,7 +54,10 @@ existing tagging is preserved.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, timezone
+
+from . import languages
 
 SCHEMA_VERSION = 3
 
@@ -97,7 +101,10 @@ def new_document(
     model: str,
     language: str = "",
     language_probability: float = 0.0,
+    language_requested: str = "",
     engine: dict | None = None,
+    operation: str = "",
+    output_check: dict | None = None,
 ) -> dict:
     return {
         "schema": SCHEMA_VERSION,
@@ -105,6 +112,13 @@ def new_document(
         "updated": _now(),
         "language": language,
         "language_probability": round(float(language_probability or 0.0), 4),
+        "language_requested": language_requested,
+        # The operation asked for: "transcribe" or "translate". Absent on
+        # transcripts made before it was recorded (see languages.operation_of).
+        "operation": operation,
+        # What the text looked like when it was produced; only meaningful for
+        # "translate", where the request alone does not prove a translation.
+        "output_check": output_check or {},
         "duration": round(float(duration or 0.0), 3),
         "model": model,
         "engine": engine or {},
@@ -214,6 +228,17 @@ def full_text(doc: dict) -> str:
 def word_count(doc: dict) -> int:
     # Counted from text, not from the word list, so the number stays correct
     # after a human edit adds or removes words but before a re-timestamp.
+    if languages.doc_is_spaceless(doc):
+        # No spaces to split on: counting whitespace-separated tokens would
+        # report a whole sentence of Chinese as one "word". Count characters
+        # and numbers instead, which is the conventional length measure for
+        # these scripts. Punctuation and spacing are not counted.
+        return sum(
+            1
+            for seg in doc.get("segments", [])
+            for ch in segment_text(seg)
+            if unicodedata.category(ch)[0] in ("L", "N")
+        )
     return sum(
         len(_WORD_SPLIT.findall(segment_text(seg)))
         for seg in doc.get("segments", [])
@@ -268,10 +293,23 @@ def summary(doc: dict) -> dict:
         "words": word_count(doc),
         "duration": doc.get("duration") or 0.0,
         "language": doc.get("language") or "",
+        "language_name": languages.name(doc.get("language")),
+        "language_probability": float(doc.get("language_probability") or 0.0),
+        # "" for projects transcribed before the language could be chosen.
+        "language_requested": doc.get("language_requested") or "",
+        "output_language": languages.output_language(doc),
+        "output_language_name": languages.name(languages.output_language(doc)),
+        "operation": languages.operation_of(doc),
+        "output_status": languages.output_status(doc),
+        "spaceless": languages.doc_is_spaceless(doc),
+        "rtl": languages.doc_is_rtl(doc),
         "model": doc.get("model") or "",
         "human_edited": bool(doc.get("human_edited")),
         "retimestamped_at": doc.get("retimestamped_at"),
-        "low_confidence": low_confidence_count(doc),
+        "confidence_meaningful": languages.confidence_is_meaningful(doc),
+        "low_confidence": (
+            low_confidence_count(doc) if languages.confidence_is_meaningful(doc) else 0
+        ),
         "speakers": speakers(doc),
         "edited_segments": sum(1 for s in segs if s.get("edited")),
     }

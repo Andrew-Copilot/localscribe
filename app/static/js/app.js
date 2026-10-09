@@ -133,7 +133,8 @@ const LS = (() => {
 
     if (worker && worker.busy) {
       cls = 'pill-busy';
-      label = 'Transcribing';
+      label = worker.operation === 'translate' ? 'Translating'
+        : (worker.operation ? 'Transcribing' : 'Working');
       detail = worker.eta_text && worker.eta_text !== 'estimating'
         ? `${Math.round((worker.progress || 0) * 100)}% - ${worker.eta_text} left`
         : `${Math.round((worker.progress || 0) * 100)}% complete`;

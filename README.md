@@ -43,7 +43,15 @@ on your own computer, then gives you a browser workbench for correcting the
 transcript against the audio. Nothing is uploaded: no cloud service, no
 account, no telemetry, and no third-party assets in the interface.
 
-In this version, this app is for English-only texts. It may handle multilingual transcription and accents well via the Whisper AI models used, but additional language outputs are not yet available. Multiple-language testing has not yet been conducted.
+Local Scribe transcribes in the language that is spoken, and spoken-language
+selection is built in: it can detect the language automatically or you can
+choose it yourself (see [Languages](#languages)). Transcription in languages
+other than English relies on Whisper's multilingual models and has so far been
+checked only with synthetic data and automated tests, not on real recordings,
+so review non-English transcripts carefully against the audio. Local Scribe
+does not translate between languages; the only translation available is
+Whisper's optional *Translate to English* operation, described in
+[Languages](#languages).
 
 > **Disclaimer.** Local Scribe is provided **"AS IS", without warranty of any
 > kind**, express or implied. The authors and the UIC TRAILblazer Lab are
@@ -176,8 +184,9 @@ forcing CPU-only if you ever want to.
    explains why.
 2. Turn on **Offline lock** in AI Settings → Privacy. All outbound network
    access is then blocked inside the process, enforced at the socket level.
-3. Back on **Projects**, create a project, add recordings, and press
-   **Transcribe**.
+3. Back on **Projects**, create a project, add recordings, choose **Transcribe**
+   or **Translate to English**, choose the **Spoken language** (leave it on
+   *Detect automatically* unless you know better), and press the main button.
 4. Open a transcribed file to review it: play the audio, click the time ribbon
    or any word to hear it again, and correct the text. Edits save
    automatically.
@@ -187,11 +196,109 @@ forcing CPU-only if you ever want to.
    pause in the middle of someone talking breaks the paragraph without
    repeating their name.
 6. Use **Find** (or <kbd>Ctrl</kbd>+<kbd>F</kbd>) to fix a recurring error
-   across the whole transcript. Red underlines mark words that are not in the
-   dictionary, blue ones mark probable transcription slips; right-click either
-   for suggestions or to accept the word.
+   across the whole transcript. For English transcripts, red underlines mark
+   words that are not in the dictionary and blue ones mark probable
+   transcription slips; right-click either for suggestions or to accept the
+   word. These checks are English-only and are switched off for other
+   languages.
 7. When the human pass is done, press **Re-timestamp and rewrite captions**,
    then download the outputs.
+
+## Languages
+
+**Choosing the spoken language.** Each project page has a **Spoken language**
+menu next to the Transcribe button.
+
+- **Detect automatically** (the default) lets Whisper identify the language
+  from the first 30 seconds of each recording. The detected language and its
+  confidence are saved with the transcript and shown on the review page and in
+  every export.
+- **A named language** (about 100 are offered) tells Whisper what to expect.
+  Choose this when a recording opens with music, noise or a different
+  language, or when detection picks the wrong one. The exports record that the
+  language was selected rather than detected.
+- The choice is remembered per project. Projects that have not chosen one start
+  from **AI Settings → Language and vocabulary → Spoken language**, which is
+  also the default for new projects.
+- English-only models (marked "English only" in the model table's Languages
+  column) only accept English or automatic detection. Cantonese needs Large v3
+  or Large v3 Turbo. Local Scribe refuses other combinations with an
+  explanation.
+
+**Transcribe or Translate to English.** The project page also asks what you
+want to do, and remembers the answer for that project:
+
+- **Transcribe** (the default) writes what was said, in the language it was
+  said. This is what research transcripts normally need.
+- **Translate to English** uses Whisper's translate task to render speech in
+  any language as English text. It is a machine translation, not a record of
+  what was said. It is the only translation Local Scribe offers.
+
+Switching the choice changes the buttons, explanations and model advice at
+once, and affects only what you run next. Recordings that already have a result
+keep the label they were made under. New projects start from **AI Settings →
+Language and vocabulary → Default operation for new projects**; changing a
+project never changes that default, and projects made before this choice
+existed stay on Transcribe.
+
+**Translation needs the right model.** Whisper's Large v3 Turbo is not trained
+for translation: asked to translate, it returns the spoken language instead of
+English. English-only models cannot translate other languages either. Local
+Scribe therefore refuses to start a translation with them (in the page and
+again on the server), explains why, and names a suitable model without
+selecting or downloading anything. AI Settings shows which models can translate
+and gives a separate recommendation for it. Small is the practical choice on
+most computers, Medium or Large v3 give better quality, and Tiny and Base are
+allowed but too weak to trust.
+
+**Translation is checked, not assumed.** Whatever Whisper returns for a
+translation, Local Scribe looks at the text on this computer and records whether
+it is English, still the spoken language, or cannot be told (very short or
+mixed text). Text that is not English is never labelled a translation: it keeps
+the plain `transcript` file names, the header says "NOT an English
+translation", the review page explains what happened, and spelling checks stay
+off. The check is a lightweight heuristic and can be unsure; it is not a quality
+score.
+
+**Nothing is overwritten silently.** Running the other operation (or Redo) on a
+recording that already has a result asks you to confirm. When you do, the
+earlier result is kept in that recording's **Edit history** (marked as an
+earlier transcript or English translation, never pruned automatically) and can
+be restored, which in turn keeps the one it replaces. Only one result is
+current at a time; there is no side-by-side bilingual editing.
+
+**Not implemented:** translation between arbitrary languages, bilingual or
+side-by-side transcripts, a separate model per operation (the model is a global
+setting; the project page offers a one-click switch to a suitable downloaded
+model and says that it changes every project), and any cloud translation
+service.
+
+**Known limitations**
+
+- Spelling and transcription-slip checking is English-only and is off for
+  every other language, so non-English transcripts are not proofread
+  automatically. "Next uncertain word" still works.
+- A file that mixes languages is transcribed in one language unless you enable
+  **Allow language switching mid-file** in AI Settings.
+- Chinese, Japanese, Thai, Lao, Burmese and Cantonese are written without
+  spaces between words, so the "Words" figure for them is a character count
+  (labelled "Characters" in exports) and captions break between characters.
+  After you correct text and re-timestamp, timing inside a multi-character
+  Whisper word is interpolated; its start and end stay exact.
+- Arabic, Hebrew and other right-to-left languages are marked right-to-left
+  in the editor and in `.docx`. The `.txt`, `.md` and caption files keep the
+  correct character order but carry no direction markup, so alignment depends
+  on the program that opens them.
+- Existing Chinese, Japanese or Thai transcripts show a character count in
+  place of the old word count the next time they are saved. Exported `.txt`
+  headers now read, for example, `Language: English (en)` rather than `en`.
+- Translation quality has not been tested on real recordings, and the
+  English check can be unsure on short or mixed text (such results are marked
+  "not confirmed", and spelling checks stay off for them).
+- Confirmed English translations are exported as `translation-en.*` instead of
+  `transcript.*`, and the other kind of file is removed from the outputs folder
+  when a result is replaced (restore the earlier result from Edit history to get
+  its files back).
 
 ## What you get per recording
 
@@ -205,6 +312,12 @@ Written into `projects/<project>/documents/<id>/outputs/`:
 | `transcript.vtt` | WebVTT captions for video software |
 | `transcript.srt` | SubRip captions |
 | `transcript.json` | Full word-level data for analysis |
+
+A confirmed English translation is written as `translation-en.*` (the same six
+formats) instead, so it can never be mistaken for an original-language
+transcript. Every file's header or metadata states the operation, the spoken
+language and whether it was detected or selected, and the language the text is
+actually in.
 
 ## Supported input formats
 
@@ -286,7 +399,12 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts
 .venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery
 .venv/Scripts/python.exe -m tests.test_engine_fallback  # GPU-to-CPU fallback
+.venv/Scripts/python.exe -m tests.test_languages     # spoken-language selection
+.venv/Scripts/python.exe -m tests.test_operations    # Transcribe / Translate to English
 ```
+
+The tests need a few packages the app itself does not, so install them with
+`pip install -r requirements-dev.txt` first.
 
 On macOS and Linux use `.venv/bin/python` instead.
 
