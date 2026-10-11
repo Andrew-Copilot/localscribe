@@ -306,6 +306,15 @@ def test_gh_client_commands() -> None:
     def failing(args, input_text):
         return subprocess.CompletedProcess(args, 1, "", "HTTP 403")
 
+    def too_many(args, input_text):
+        return subprocess.CompletedProcess(args, 0, "[" + ",".join(['{"number":1}'] * R.ISSUE_LIST_LIMIT) + "]", "")
+
+    try:
+        R.GhClient("a/b", too_many).list_issues()
+        check("issue list at the limit refuses to continue", False)
+    except R.GhError:
+        check("issue list at the limit refuses to continue", True)
+
     try:
         R.GhClient("a/b", failing).list_labels()
         check("gh failure raises GhError", False)

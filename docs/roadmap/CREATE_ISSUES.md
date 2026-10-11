@@ -2,7 +2,7 @@
 
 This turns the roadmap backlog (R01–R18) into GitHub issues with one command, run inside a GitHub Codespace in your phone's browser. No personal access token is needed: Codespaces signs the GitHub CLI (`gh`) in for you.
 
-- Issue definitions: [`roadmap-issues.json`](roadmap-issues.json) (generated from [`issue-backlog.md`](issue-backlog.md))
+- Issue definitions: [`roadmap-issues.json`](roadmap-issues.json) (kept in sync with [`issue-backlog.md`](issue-backlog.md); checked by the tests)
 - Importer: [`scripts/create_roadmap_issues.py`](../../scripts/create_roadmap_issues.py)
 - Result after a run: `issue-index.md` in this folder
 

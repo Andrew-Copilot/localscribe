@@ -385,7 +385,11 @@ class GhClient:
             "--limit", str(ISSUE_LIST_LIMIT),
             "--json", "number,title,body,state,url,labels,milestone",
         ])
-        return [_issue_from_json(raw) for raw in json.loads(out or "[]")]
+        raw_issues = json.loads(out or "[]")
+        if len(raw_issues) >= ISSUE_LIST_LIMIT:
+            raise GhError(f"the repository has {ISSUE_LIST_LIMIT} or more issues, so existing roadmap "
+                          "issues cannot be checked reliably; refusing to continue to avoid duplicates")
+        return [_issue_from_json(raw) for raw in raw_issues]
 
     def list_labels(self) -> List[str]:
         out = self._gh(["label", "list", "--repo", self.repo, "--limit", "1000", "--json", "name"])
