@@ -1,0 +1,17 @@
+{
+  // Lightweight Codespaces environment for repository tooling such as
+  // scripts/create_roadmap_issues.py. It provides Python and the GitHub CLI
+  // only; it does not install the transcription app's heavy dependencies.
+  // No secrets belong here: Codespaces signs `gh` in automatically.
+  "name": "Local Scribe tooling",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "python scripts/create_roadmap_issues.py --validate-only",
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["docs/roadmap/CREATE_ISSUES.md"]
+    }
+  }
+}
