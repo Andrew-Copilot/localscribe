@@ -94,6 +94,21 @@
 </div>
 {% endif %}
 
+{% if activity %}
+<section class="card" aria-labelledby="activity-title">
+  <h2 id="activity-title">Recent local recovery activity</h2>
+  <ol class="small">
+    {% for event in activity|reverse %}
+    <li>
+      {{ event.timestamp }} — {{ event.project_slug }}:
+      {{ event.action|replace('_', ' ') }} ({{ event.outcome }})
+      {% if event.snapshot_created %}, pre-action snapshot created{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
 <div class="card" style="margin-top:1.5rem">
   <h3>How this protects your data</h3>
   <p class="small muted">

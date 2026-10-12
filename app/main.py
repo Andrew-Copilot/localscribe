@@ -197,7 +197,10 @@ async def page_index(request: Request):
     return templates.TemplateResponse(
         request,
         "index.html",
-        base_context(request, projects=projects.list_projects()),
+        base_context(
+            request, projects=projects.list_projects(),
+            activity=activity.recent(20),
+        ),
     )
 
 
@@ -827,7 +830,9 @@ async def api_download_project_snapshot(slug: str, filename: str):
 async def api_open_project_snapshots(slug: str):
     try:
         projects.load_project(slug)
-        opened = projects.reveal(projects.local_snapshot_dir(slug))
+        folder = projects.local_snapshot_dir(slug)
+        folder.mkdir(parents=True, exist_ok=True)
+        opened = projects.reveal(folder)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"opened": opened}
@@ -874,7 +879,10 @@ async def api_import_project(
 
     if record.get("conflict"):
         return record
-    activity.record(record["slug"], "restore", "success", mode=mode)
+    activity.record(
+        record["slug"], "restore", "success", mode=mode,
+        snapshot_created=snapshot_before,
+    )
     CONSOLE.success(
         f"Imported project archive with {record['stats']['documents']} document(s)",
     )

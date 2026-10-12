@@ -548,11 +548,17 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
             )
         except snapshots.SnapshotError as exc:
             raise ProjectError(str(exc)) from exc
+        except OSError as exc:
+            raise ProjectError("Snapshot could not be created.") from exc
 
 
 def local_snapshot_dir(slug: str) -> Path:
     """Return a hidden, app-managed location that survives project deletion."""
-    return PATHS.projects / ".snapshots" / slugify(slug)
+    root = PATHS.projects / ".snapshots"
+    directory = root / slugify(slug)
+    if root.is_symlink() or directory.is_symlink():
+        raise ProjectError("Snapshot location is not safe.")
+    return directory
 
 
 def create_local_snapshot(slug: str, include_media: bool = True) -> Path:

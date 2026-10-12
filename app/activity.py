@@ -39,8 +39,11 @@ def record(project_slug: str, action: str, outcome: str, **details) -> dict:
         events.append(event)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(path.name + ".tmp")
-        temporary.write_text(json.dumps(events[-_MAX_EVENTS:], indent=2), encoding="utf-8")
-        temporary.replace(path)
+        try:
+            temporary.write_text(json.dumps(events[-_MAX_EVENTS:], indent=2), encoding="utf-8")
+            temporary.replace(path)
+        except OSError:
+            temporary.unlink(missing_ok=True)
     return event
 
 
@@ -56,4 +59,17 @@ def for_project(project_slug: str, limit: int = 50) -> list[dict]:
         event for event in events
         if isinstance(event, dict) and event.get("project_slug") == project_slug
     ]
-    return matching[-max(0, min(int(limit), 100)):]
+    count = max(0, min(int(limit), 100))
+    return matching[-count:] if count else []
+
+
+def recent(limit: int = 50) -> list[dict]:
+    with _LOCK:
+        try:
+            events = json.loads(_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+    if not isinstance(events, list):
+        return []
+    count = max(0, min(int(limit), 100))
+    return [event for event in events[-count:] if isinstance(event, dict)] if count else []
