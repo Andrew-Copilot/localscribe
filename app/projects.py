@@ -721,9 +721,9 @@ def export_project(
                             json.dumps(project_json, indent=2, ensure_ascii=False),
                         )
                     else:
-                        with path.open("rb") as source, archive.open(
-                            archive_name, "w"
-                        ) as target:
+                        info = zipfile.ZipInfo.from_file(path, archive_name)
+                        info.compress_type = archive.compression
+                        with path.open("rb") as source, archive.open(info, "w") as target:
                             for chunk in iter(lambda: source.read(1024 * 1024), b""):
                                 check_cancelled()
                                 target.write(chunk)

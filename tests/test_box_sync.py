@@ -6,6 +6,7 @@ Run with: python -m tests.test_box_sync
 from __future__ import annotations
 
 import hashlib
+import threading
 import tempfile
 import time
 import zipfile
@@ -217,13 +218,17 @@ def test_copy_verification_and_retry_after_interruption():
 
 
 def test_cancellation_cleans_partial_output():
-    with backup_context() as (_root, destination, _settings, project, _):
+    with backup_context() as (_root, destination, settings, project, _):
         manager = box_sync.BackupManager()
         original_copy = box_sync._copy_and_verify
+        entered_copy = threading.Event()
 
-        def cancel_during_copy(source, target, cancel_event, progress):
-            cancel_event.set()
-            return original_copy(source, target, cancel_event, progress)
+        def cancel_during_copy(source, target, cancel_event, progress, check_allowed):
+            entered_copy.set()
+            cancel_event.wait(timeout=5)
+            return original_copy(
+                source, target, cancel_event, progress, check_allowed
+            )
 
         with patch.object(box_sync, "_copy_and_verify", cancel_during_copy):
             job = manager.submit(
@@ -231,11 +236,41 @@ def test_cancellation_cleans_partial_output():
                 confirm_sync_destination=True,
                 independently_verified_box_health=False,
             )
+            check("backup entered cancellable copy stage",
+                  entered_copy.wait(timeout=5))
+            check("active backup accepts cancellation",
+                  manager.cancel(project["slug"], job["job_id"]))
             result = wait_for_job(manager, project["slug"], job["job_id"])
         check("cancellation reports a cancelled outcome", result["status"] == "cancelled")
         check("cancelled archive is not published",
               not list(destination.glob("*.lsproj"))
               and not list(destination.glob(".*.partial")))
+
+        def engage_offline_during_copy(
+            source, target, cancel_event, progress, check_allowed
+        ):
+            settings.values["offline_lock"] = True
+            return original_copy(
+                source, target, cancel_event, progress, check_allowed
+            )
+
+        with patch.object(
+            box_sync, "_copy_and_verify", engage_offline_during_copy
+        ):
+            locked = manager.submit(
+                project["slug"],
+                confirm_sync_destination=True,
+                independently_verified_box_health=False,
+            )
+            stopped = wait_for_job(manager, project["slug"], locked["job_id"])
+        check("engaging Offline Lock stops an active copy",
+              stopped["status"] == "failed"
+              and "Offline Lock" in stopped["error"])
+        check("Offline Lock interruption publishes no archive",
+              not list(destination.glob("*.lsproj"))
+              and not list(destination.glob(".*.partial")))
+
+        settings.values["offline_lock"] = False
         retry = manager.submit(
             project["slug"],
             confirm_sync_destination=True,

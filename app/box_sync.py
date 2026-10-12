@@ -78,6 +78,7 @@ def _copy_and_verify(
     target: Path,
     cancel_event: threading.Event,
     progress,
+    check_allowed,
 ) -> int:
     partial = target.with_name(f".{target.name}.{uuid.uuid4().hex}.partial")
     source_digest = hashlib.sha256()
@@ -87,8 +88,7 @@ def _copy_and_verify(
             for chunk in iter(lambda: input_file.read(COPY_CHUNK_BYTES), b""):
                 if cancel_event.is_set():
                     raise projects.ProjectCancelled("Backup cancelled.")
-                if config.SETTINGS.get("offline_lock"):
-                    raise BackupError("Offline Lock was engaged; the backup was stopped.")
+                check_allowed()
                 output_file.write(chunk)
                 source_digest.update(chunk)
                 total += len(chunk)
@@ -101,14 +101,14 @@ def _copy_and_verify(
             for chunk in iter(lambda: copied_file.read(COPY_CHUNK_BYTES), b""):
                 if cancel_event.is_set():
                     raise projects.ProjectCancelled("Backup cancelled.")
+                check_allowed()
                 copied_digest.update(chunk)
                 copied_size += len(chunk)
         if copied_size != total or copied_digest.digest() != source_digest.digest():
             raise BackupError("The copied archive did not pass checksum verification.")
         if cancel_event.is_set():
             raise projects.ProjectCancelled("Backup cancelled.")
-        if config.SETTINGS.get("offline_lock"):
-            raise BackupError("Offline Lock was engaged; the backup was stopped.")
+        check_allowed()
         if target.exists():
             raise BackupError("A backup with that name already exists; retry to choose another name.")
         partial.replace(target)
@@ -204,17 +204,30 @@ class BackupManager:
             if configured_destination() != job["destination"]:
                 raise BackupError("The configured Box Sync folder changed; retry the backup.")
 
+            def check_allowed() -> None:
+                if job["cancel_event"].is_set():
+                    raise projects.ProjectCancelled("Backup cancelled.")
+                if config.SETTINGS.get("offline_lock"):
+                    raise BackupError(
+                        "Offline Lock was engaged; the backup was stopped."
+                    )
+                if configured_destination() != job["destination"]:
+                    raise BackupError(
+                        "The configured Box Sync folder changed; retry the backup."
+                    )
+
             config.PATHS.logs.mkdir(parents=True, exist_ok=True)
             temporary_dir = config.PATHS.logs / f".box-backup-{job_id}"
             temporary_dir.mkdir()
             try:
                 self._update(job_id, status="running", stage="building_archive")
-                archive = projects.export_project(
-                    job["slug"],
-                    temporary_dir,
-                    include_media=job["include_media"],
-                    cancel_event=job["cancel_event"],
-                )
+                with projects._LOCK:
+                    archive = projects.export_project(
+                        job["slug"],
+                        temporary_dir,
+                        include_media=job["include_media"],
+                        cancel_event=job["cancel_event"],
+                    )
                 if job["cancel_event"].is_set():
                     raise projects.ProjectCancelled("Backup cancelled.")
                 if config.SETTINGS.get("offline_lock"):
@@ -236,6 +249,7 @@ class BackupManager:
                     target,
                     job["cancel_event"],
                     lambda count: self._update(job_id, bytes_copied=count),
+                    check_allowed,
                 )
                 self._update(
                     job_id,
