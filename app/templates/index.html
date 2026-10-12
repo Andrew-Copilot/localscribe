@@ -12,6 +12,7 @@
     </p>
   </div>
   <div class="row">
+    <a class="btn btn-quiet" href="/privacy">Privacy Center</a>
     <button type="button" class="btn btn-primary" id="new-project-btn">New project</button>
     <button type="button" class="btn" id="import-btn">Import project</button>
     <input type="file" id="import-input" accept=".lsproj,.zip" hidden>
@@ -101,7 +102,7 @@
   <ol class="small">
     {% for event in activity|reverse %}
     <li>
-      {{ event.timestamp }} — {{ event.project_slug }}:
+      {{ event.timestamp }} — {{ event.project_slug or 'Local Scribe' }}:
       {{ event.action|replace('_', ' ') }} ({{ event.outcome }})
       {% if event.snapshot_created %}, pre-action snapshot created{% endif %}
     </li>

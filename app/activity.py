@@ -16,13 +16,15 @@ def _path():
     return PATHS.logs / "project-activity.json"
 
 
-def record(project_slug: str, action: str, outcome: str, **details) -> dict:
+def record(project_slug: str | None, action: str, outcome: str, **details) -> dict:
     event = {
         "timestamp": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
         "project_slug": project_slug,
         "action": action,
         "outcome": outcome,
     }
+    if details.get("category") == "network":
+        event["category"] = "network"
     for key in ("mode", "snapshot_created"):
         if key in details:
             event[key] = details[key]

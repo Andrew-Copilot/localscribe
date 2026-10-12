@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Privacy Center - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div class="grow">
+    <h1>Privacy Center</h1>
+    <p class="lede">Review network controls, local storage, recovery activity, and sanitized diagnostics.</p>
+  </div>
+</div>
+
+<section class="card">
+  <h2>Network controls</h2>
+  <dl>
+    <dt>Offline Lock</dt>
+    <dd>
+      {% if offline_lock %}<span class="badge badge-ok">Engaged</span>
+      {% else %}<span class="badge badge-warn">Off</span>{% endif %}
+      <a href="/settings#settings-privacy">Change in AI Settings</a>
+    </dd>
+    <dt>Update checks</dt>
+    <dd>{{ 'Enabled (when Offline Lock is off)' if check_for_updates else 'Disabled' }}</dd>
+    <dt>Remote backup</dt>
+    <dd>Not configured. Local Scribe does not copy snapshots to Box or another remote destination.</dd>
+    <dt>Last network action</dt>
+    <dd>
+      {% if last_network_action %}
+        {{ last_network_action.timestamp }} — {{ last_network_action.action|replace('_', ' ') }}
+        ({{ last_network_action.outcome }})
+      {% else %}None recorded{% endif %}
+    </dd>
+  </dl>
+</section>
+
+<section class="card">
+  <h2>Local recovery and storage</h2>
+  <dl>
+    <dt>Projects folder</dt><dd class="mono small">{{ storage.projects }}</dd>
+    <dt>Local snapshots</dt><dd class="mono small">{{ storage.snapshots }}</dd>
+    <dt>Activity history</dt><dd class="mono small">{{ storage.activity }}</dd>
+  </dl>
+  <p class="small muted">
+    Local snapshots are unencrypted and remain on this computer. Protect the computer and any copied backups appropriately.
+  </p>
+</section>
+
+<section class="card">
+  <h2>Recent activity</h2>
+  {% if activity %}
+  <ol class="small">
+    {% for event in activity|reverse %}
+    <li>
+      {{ event.timestamp }} — {{ event.project_slug or 'Local Scribe' }}:
+      {{ event.action|replace('_', ' ') }} ({{ event.outcome }})
+      {% if event.snapshot_created %}, pre-action snapshot created{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="small muted">No network or recovery actions have been recorded.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Sanitized diagnostics</h2>
+  <p class="small">
+    The report contains app/runtime versions, operating system and architecture,
+    coarse hardware availability, dependency versions, and privacy-control
+    states. It excludes project names, media, transcript content, tokens, logs,
+    and absolute user paths. It is never uploaded.
+  </p>
+  <div class="row">
+    <button type="button" class="btn" id="preview-diagnostics">Preview diagnostics</button>
+    <button type="button" class="btn btn-primary" id="save-diagnostics" disabled>Save reviewed diagnostics</button>
+  </div>
+  <pre id="diagnostics-preview" class="mono small" hidden style="white-space:pre-wrap; overflow-wrap:anywhere"></pre>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/privacy.js"></script>
+{% endblock %}

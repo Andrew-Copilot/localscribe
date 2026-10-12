@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 
 from .config import PATHS, SETTINGS, app_version
+from . import activity
 from .console import CONSOLE
 
 GITHUB_REPO = "jeremyriel/localscribe"
@@ -106,6 +107,7 @@ def refresh_state() -> dict:
 
     CONSOLE.step("Checking GitHub for a newer version of Local Scribe",
                  repo=GITHUB_REPO)
+    activity.record(None, "update_check", "started", category="network")
 
     latest = None
     download_url = None
@@ -129,11 +131,16 @@ def refresh_state() -> dict:
     if not latest:
         CONSOLE.debug("Update check found nothing to compare against "
                        "(no release published yet, or the request failed)")
+        activity.record(None, "update_check", "no_result", category="network")
         with _lock:
             _STATE.update(checked=False, available=False, current=current)
         return state()
 
     available = _is_newer(latest, current)
+    activity.record(
+        None, "update_check", "available" if available else "current",
+        category="network",
+    )
     with _lock:
         _STATE.update(
             checked=True, available=available, current=current,

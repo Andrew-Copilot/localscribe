@@ -19,7 +19,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import catalog, exporters, media, projects
+from . import activity, catalog, exporters, media, projects
 from .config import SETTINGS
 from .console import CONSOLE, fmt_bytes, fmt_duration, fmt_timestamp
 from .engine import ENGINE, Cancelled
@@ -196,6 +196,8 @@ class JobQueue:
             job.status = "cancelled"
             job.detail = "Cancelled before it started"
             job.finished_at = _now()
+            if job.kind == "download":
+                activity.record(None, "model_download", "cancelled", category="network")
             CONSOLE.warn(f"Cancelled before starting: {job.label}", job=job.id)
         else:
             CONSOLE.warn(f"Cancellation requested for {job.label}", job=job.id)
@@ -241,10 +243,14 @@ class JobQueue:
                 if job.status == "running":
                     job.status = "done"
                     job.progress = 1.0
+                if job.kind == "download":
+                    activity.record(None, "model_download", job.status, category="network")
 
             except Cancelled:
                 job.status = "cancelled"
                 job.detail = "Cancelled"
+                if job.kind == "download":
+                    activity.record(None, "model_download", "cancelled", category="network")
                 CONSOLE.warn(f"Cancelled: {job.label}", job=job.id)
                 self._mark_document(job, "cancelled", "Cancelled by the user")
 
@@ -252,6 +258,8 @@ class JobQueue:
                 job.status = "failed"
                 job.error = str(exc)
                 job.detail = f"Failed: {exc}"
+                if job.kind == "download":
+                    activity.record(None, "model_download", "failed", category="network")
                 CONSOLE.error(f"{job.label} failed: {exc}", job=job.id)
                 CONSOLE.debug("Traceback", traceback=traceback.format_exc())
                 self._mark_document(job, "failed", str(exc), error=str(exc))

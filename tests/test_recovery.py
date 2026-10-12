@@ -85,9 +85,12 @@ def test_activity_is_local_and_project_scoped():
     try:
         activity.record("study-one", "create_snapshot", "success", snapshot_created=True)
         activity.record("study-two", "restore", "success", mode="rename")
+        activity.record(None, "update_check", "current", category="network")
         events = activity.for_project("study-one")
         check("activity history is project-scoped", len(events) == 1 and events[0]["project_slug"] == "study-one")
         check("activity retains the operation outcome", events[0]["outcome"] == "success")
+        recent = activity.recent()
+        check("network actions are recorded without a project identity", recent[-1]["category"] == "network" and recent[-1]["project_slug"] is None)
         check("activity file is kept in local app data", (paths.logs / "project-activity.json").is_file())
     except Exception as exc:
         check("local activity history", False, str(exc))
