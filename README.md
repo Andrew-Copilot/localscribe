@@ -304,6 +304,7 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_assets        # front-end asset guards
 .venv/Scripts/python.exe -m tests.test_sensitivity   # project declarations and future backup policy
 .venv/Scripts/python.exe -m tests.test_snapshots     # local snapshots, validation, legacy imports
+.venv/Scripts/python.exe -m tests.test_recovery      # local backup, restore, and activity history
 .venv/Scripts/python.exe -m tests.test_speakers      # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts
 .venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery

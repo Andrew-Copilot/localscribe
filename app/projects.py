@@ -548,8 +548,6 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
             )
         except snapshots.SnapshotError as exc:
             raise ProjectError(str(exc)) from exc
-        except OSError as exc:
-            raise ProjectError("Snapshot could not be created.") from exc
 
 
 def local_snapshot_dir(slug: str) -> Path:
@@ -562,7 +560,10 @@ def local_snapshot_dir(slug: str) -> Path:
 
 
 def create_local_snapshot(slug: str, include_media: bool = True) -> Path:
-    return export_project(slug, local_snapshot_dir(slug), include_media=include_media)
+    try:
+        return export_project(slug, local_snapshot_dir(slug), include_media=include_media)
+    except OSError as exc:
+        raise ProjectError("Snapshot could not be created.") from exc
 
 
 def get_local_snapshot(slug: str, filename: str) -> Path:
@@ -628,6 +629,8 @@ def _import_archive(
         if (PATHS.projects / slug).exists():
             if mode == "prompt":
                 existing = read_json(PATHS.projects / slug / PROJECT_FILE, {})
+                if not isinstance(existing, dict):
+                    existing = {}
                 return {
                     "conflict": True,
                     "slug": slug,
