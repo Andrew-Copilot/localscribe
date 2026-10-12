@@ -69,6 +69,10 @@ class ProjectValidationError(ProjectError):
     """Incoming project metadata is invalid."""
 
 
+class ProjectConflictError(ProjectError):
+    """An operation needs an explicit choice because a project already exists."""
+
+
 def _validate_sensitivity(value) -> str:
     try:
         return validate_sensitivity(value)
@@ -425,6 +429,87 @@ def delete_document(slug: str, doc_id: str) -> None:
                 media.unlink(missing_ok=True)
         shutil.rmtree(document_dir(slug, doc_id), ignore_errors=True)
         touch_project(slug)
+
+
+def _snapshot_dir(slug: str) -> Path:
+    clean = slugify(slug)
+    if not clean:
+        raise ProjectError("Invalid project identifier.")
+    return PATHS.projects / ".snapshots" / clean
+
+
+def create_snapshot(
+    slug: str, *, include_media: bool = True
+) -> dict:
+    """Save a verified project archive outside the project directory."""
+    record = load_project(slug)
+    slug = record["slug"]
+    snapshot_dir = _snapshot_dir(slug)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    staging = snapshot_dir / f".tmp-{uuid4().hex}"
+    staging.mkdir()
+    try:
+        with _LOCK:
+            archive = export_project(slug, staging, include_media=include_media)
+            snapshot_id = f"{slug}-{_stamp()}-{uuid4().hex[:8]}{EXPORT_SUFFIX}"
+            target = snapshot_dir / snapshot_id
+            archive.replace(target)
+        return {
+            "snapshot_id": snapshot_id,
+            "created": _now(),
+            "size_bytes": target.stat().st_size,
+            "includes_media": bool(include_media),
+        }
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def list_snapshots(slug: str) -> list[dict]:
+    record = load_project(slug)
+    snapshot_dir = _snapshot_dir(record["slug"])
+    if not snapshot_dir.is_dir():
+        return []
+    snapshots = []
+    for path in snapshot_dir.iterdir():
+        if path.suffix != EXPORT_SUFFIX or not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        snapshots.append({
+            "snapshot_id": path.name,
+            "created": datetime.fromtimestamp(stat.st_mtime, timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "size_bytes": stat.st_size,
+        })
+    return sorted(snapshots, key=lambda item: item["created"], reverse=True)
+
+
+def restore_snapshot(slug: str, snapshot_id: str, mode: str = "abort") -> dict | None:
+    """Restore a saved archive after validating its identity and integrity."""
+    record = load_project(slug)
+    snapshot_dir = _snapshot_dir(record["slug"]).resolve()
+    candidate = Path(str(snapshot_id))
+    if (
+        candidate.name != str(snapshot_id)
+        or candidate.suffix != EXPORT_SUFFIX
+        or candidate.name in ("", ".", "..")
+    ):
+        raise ProjectValidationError("Invalid snapshot identifier.")
+    archive = (snapshot_dir / candidate.name).resolve()
+    if archive.parent != snapshot_dir or not archive.is_file():
+        raise ProjectError("That recovery snapshot was not found.")
+    if mode not in ("rename", "replace", "abort"):
+        raise ProjectValidationError("Restore mode must be 'rename', 'replace', or 'abort'.")
+    if mode == "abort":
+        return None
+
+    manifest = inspect_archive(archive)
+    incoming_slug = slugify(manifest.get("slug") or manifest.get("title") or "imported")
+    target = project_dir(incoming_slug)
+    if mode == "replace" and target.exists():
+        create_snapshot(incoming_slug)
+    return import_project(archive, mode=mode)
 
 
 def touch_project(slug: str) -> None:
