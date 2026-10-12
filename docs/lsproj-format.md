@@ -44,7 +44,7 @@ The manifest is UTF-8 JSON with these fields:
 | `includes_media` | Boolean: whether source-media files were requested for this export. |
 | `data_sensitivity` | User-declared sensitivity value copied from project metadata. |
 | `documents` | Array of each document's `id`, `filename`, and `status`. |
-| `transcription_provenance` | Array keyed by `document_id`, with the document's `engine`, `media`, and `stats` metadata. |
+| `transcription_provenance` | Array keyed by `document_id`, with the document's `engine`, optional `provenance`, `media`, and `stats` metadata. |
 | `files` | One entry for every payload file other than the manifest itself. |
 
 Each `files` entry has a unique root-relative `path`, its uncompressed
@@ -73,6 +73,10 @@ Example (the `files` array is abbreviated):
     {
       "document_id": "document-id",
       "engine": {"name": "engine name"},
+      "provenance": {
+        "vocabulary_profile": {"id": "profile-id", "name": "Study terms"},
+        "transcription_settings": {"language": "en"}
+      },
       "media": {},
       "stats": {}
     }
@@ -114,9 +118,12 @@ project view expose the integrity outcome.
 Version 1 has no required checksum list. Its payload can be imported, but its
 integrity cannot be verified; Local Scribe identifies this explicitly. Hashes
 are not a digital signature and do not establish provenance. The manifest's
-transcription provenance records the available engine, media-probe, and
-statistics metadata copied from each document. The original project metadata
-also retains its application version where present.
+transcription provenance records the available engine, optional profile and
+settings metadata, media-probe, and statistics copied from each document.
+Vocabulary prompt and hotword values are omitted from engine metadata by
+default. Profile terms remain in the local profile library and are not bundled
+in project exports. The original project metadata also retains its application
+version where present.
 
 ## Versioning and migration policy
 
@@ -135,4 +142,3 @@ semantics. Format changes that alter required fields or interpretation require
 a new integer version and a documented migration path. Keep versioned golden
 archives in `tests/fixtures/` and test their import behavior when changing
 readers or writers.
-

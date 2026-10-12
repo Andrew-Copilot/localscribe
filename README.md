@@ -215,6 +215,25 @@ Written into `projects/<project>/documents/<id>/outputs/`:
 | `transcript.srt` | SubRip captions |
 | `transcript.json` | Full word-level data for analysis |
 
+## Reusable vocabulary and study presets
+
+On a project's page, create a profile from a term list or import UTF-8 `.txt`
+and `.csv` files, then assign it to that project. Profiles are stored locally
+with application settings and can be reused across projects. CSV files may use
+a `term`, `terms`, `word`, or `words` column. A profile can target initial-prompt
+context or hotwords and can optionally set language, task, beam size, best-of,
+or multilingual/VAD options; a settings-only study preset is also supported.
+Terms are combined with the corresponding
+existing AI setting rather than silently replacing it; the existing project
+glossary fallback remains intact.
+
+Project archives and transcription provenance record the profile identity and
+applied settings, but not the profile's vocabulary terms by default. The
+separate local profile library is not bundled into a project export. Transcript
+content and existing project metadata retain their normal export behavior.
+Download **Uncertain-term report (CSV)** from the project page to review each
+word whose model confidence is below the editor's low-confidence threshold.
+
 ## Supported input formats
 
 **Audio** wav, mp3, m4a, aac, flac, ogg, opus, wma, aiff, amr, ac3, mka, caf, au
@@ -232,6 +251,7 @@ projects/            your projects: media, transcripts, exports
 models/              downloaded Whisper weights
 logs/                rotating application log and the pidfile
 settings.json        your settings
+vocabulary_profiles.json   local reusable vocabulary and preset library
 .venv/               the private Python environment
 ```
 
@@ -322,6 +342,7 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_box_sync       # local Box Sync copy safeguards
 .venv/Scripts/python.exe -m tests.test_speakers       # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts
+.venv/Scripts/python.exe -m tests.test_vocabulary    # reusable profiles and presets
 .venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery
 .venv/Scripts/python.exe -m tests.test_engine_fallback  # GPU-to-CPU fallback
 ```

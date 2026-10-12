@@ -53,6 +53,7 @@ EDITABLE_FIELDS = (
     "participant_scheme",
     "consent_notes",
     "glossary",
+    "vocabulary_profile_id",
     "tags",
     "data_sensitivity",
 )
@@ -177,6 +178,7 @@ def new_project_record(title: str, **fields) -> dict:
         "participant_scheme": "",
         "consent_notes": "",
         "glossary": "",
+        "vocabulary_profile_id": "",
         "tags": [],
         "data_sensitivity": DEFAULT_SENSITIVITY,
         "created": _now(),
@@ -233,6 +235,8 @@ def save_project(slug: str, updates: dict) -> dict:
                 if isinstance(value, str):
                     value = [t.strip() for t in value.split(",")]
                 value = [str(t).strip() for t in (value or []) if str(t).strip()]
+            elif key == "vocabulary_profile_id":
+                value = str(value if value is not None else "").strip()
             else:
                 value = str(value if value is not None else "").strip()
             record[key] = value
@@ -311,6 +315,21 @@ def project_stats(slug: str) -> dict:
         ),
         "reviewed": sum(1 for d in docs if d.get("human_edited")),
     }
+
+
+def _redact_export_vocabulary(value):
+    """Remove prompt and hotword contents from archived provenance JSON."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                "[omitted]" if key in {"initial_prompt", "hotwords"}
+                else _redact_export_vocabulary(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_export_vocabulary(item) for item in value]
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -682,7 +701,8 @@ def export_project(
         "transcription_provenance": [
             {
                 "document_id": d["id"],
-                "engine": d.get("engine", {}),
+                "engine": _redact_export_vocabulary(d.get("engine", {})),
+                "provenance": _redact_export_vocabulary(d.get("provenance", {})),
                 "media": d.get("media", {}),
                 "stats": d.get("stats", {}),
             }
@@ -729,6 +749,26 @@ def export_project(
                             archive_name,
                             json.dumps(project_json, indent=2, ensure_ascii=False),
                         )
+                    elif path.suffix.casefold() == ".json":
+                        try:
+                            payload = json.loads(path.read_text(encoding="utf-8"))
+                        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                            payload = None
+                        if payload is not None:
+                            archive.writestr(
+                                archive_name,
+                                json.dumps(
+                                    _redact_export_vocabulary(payload),
+                                    indent=2, ensure_ascii=False,
+                                ),
+                            )
+                        else:
+                            info = zipfile.ZipInfo.from_file(path, archive_name)
+                            info.compress_type = archive.compression
+                            with path.open("rb") as source, archive.open(info, "w") as target:
+                                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                                    check_cancelled()
+                                    target.write(chunk)
                     else:
                         info = zipfile.ZipInfo.from_file(path, archive_name)
                         info.compress_type = archive.compression

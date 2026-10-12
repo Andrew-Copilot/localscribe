@@ -13,6 +13,7 @@ local Python services that may be running alongside it:
 from __future__ import annotations
 
 import asyncio
+import csv
 import io
 import json
 import os
@@ -41,6 +42,7 @@ from . import (
     review,
     update_check,
     validation,
+    vocabulary,
     winlibs,
 )
 from .config import (
@@ -231,6 +233,7 @@ async def page_project(request: Request, slug: str):
         project = projects.load_project(slug)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    profiles = vocabulary.list_profiles()
     return templates.TemplateResponse(
         request,
         "project.html",
@@ -247,6 +250,11 @@ async def page_project(request: Request, slug: str):
                 if activity.category(event.get("action")) == "recovery"
             ],
             box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
+            vocabulary_profiles=profiles,
+            vocabulary_profile_available=any(
+                item["id"] == project.get("vocabulary_profile_id")
+                for item in profiles
+            ),
             accepted=sorted(media.MEDIA_EXTENSIONS),
         ),
     )
@@ -718,6 +726,9 @@ async def api_create_project(request: Request):
     title = (payload.get("title") or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="A project title is required.")
+    profile_id = payload.get("vocabulary_profile_id")
+    if profile_id and not vocabulary.get_profile(str(profile_id)):
+        raise HTTPException(status_code=400, detail="The selected vocabulary profile was not found.")
     # `title` is passed positionally, so it must not also arrive as a keyword.
     try:
         record = projects.create_project(title, **{
@@ -746,6 +757,9 @@ async def api_project(slug: str):
 @app.put("/api/projects/{slug}")
 async def api_update_project(slug: str, request: Request):
     payload = await request.json()
+    profile_id = payload.get("vocabulary_profile_id")
+    if profile_id and not vocabulary.get_profile(str(profile_id)):
+        raise HTTPException(status_code=400, detail="The selected vocabulary profile was not found.")
     try:
         record = projects.save_project(slug, payload)
     except projects.ProjectValidationError as exc:
@@ -754,6 +768,101 @@ async def api_update_project(slug: str, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     CONSOLE.info(f"Saved metadata for '{record['title']}'", slug=slug)
     return {"project": record}
+
+
+@app.get("/api/vocabulary-profiles")
+async def api_vocabulary_profiles():
+    return {"profiles": vocabulary.list_profiles()}
+
+
+@app.post("/api/vocabulary-profiles")
+async def api_create_vocabulary_profile(request: Request):
+    payload = await request.json()
+    try:
+        profile = vocabulary.create_profile(
+            payload.get("name"),
+            payload.get("terms"),
+            target=payload.get("target", "initial_prompt"),
+            settings=payload.get("settings"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"profile": profile}
+
+
+@app.post("/api/vocabulary-profiles/import")
+async def api_import_vocabulary_profile(
+    file: UploadFile,
+    name: str = Form(""),
+    target: str = Form("initial_prompt"),
+):
+    filename = file.filename or ""
+    try:
+        profile = vocabulary.import_profile(
+            name or Path(filename).stem,
+            filename,
+            await file.read(vocabulary.MAX_PROFILE_BYTES + 1),
+            target=target,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"profile": profile}
+
+
+@app.delete("/api/vocabulary-profiles/{profile_id}")
+async def api_delete_vocabulary_profile(profile_id: str):
+    assigned = [
+        project["slug"] for project in projects.list_projects()
+        if project.get("vocabulary_profile_id") == profile_id
+    ]
+    if assigned:
+        raise HTTPException(
+            status_code=409,
+            detail="Unassign this profile from every project before deleting it.",
+        )
+    if not vocabulary.delete_profile(profile_id):
+        raise HTTPException(status_code=404, detail="Vocabulary profile was not found.")
+    return {"deleted": True}
+
+
+@app.get("/api/projects/{slug}/uncertain-terms.csv")
+async def api_uncertain_terms_report(slug: str):
+    try:
+        projects.load_project(slug)
+        documents = projects.list_documents(slug)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["term", "confidence", "file", "start_seconds"])
+    for record in documents:
+        doc = projects.load_transcript(slug, record["id"])
+        if not isinstance(doc, dict):
+            continue
+        for segment in doc.get("segments") or []:
+            if not isinstance(segment, dict):
+                continue
+            for word in segment.get("words") or []:
+                if not isinstance(word, dict):
+                    continue
+                try:
+                    confidence = float(word.get("prob", 1.0))
+                except (TypeError, ValueError):
+                    confidence = 1.0
+                term = str(word.get("w") or "").strip()
+                if not term or confidence >= LOW_CONFIDENCE:
+                    continue
+                writer.writerow([
+                    term, f"{confidence:.4f}", record.get("filename") or "",
+                    word.get("start", segment.get("start", "")),
+                ])
+    filename = f"{projects.slugify(slug)}-uncertain-terms.csv"
+    return Response(
+        output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.delete("/api/projects/{slug}")
@@ -1483,8 +1592,10 @@ async def api_proofread(slug: str, doc_id: str, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     doc = projects.load_transcript(slug, doc_id) or {}
+    profile = vocabulary.get_profile(project.get("vocabulary_profile_id"))
     extra = proofread.extra_words(
         project.get("glossary"),
+        (profile or {}).get("terms"),
         settings.get("initial_prompt"),
         settings.get("hotwords"),
         doc.get("dictionary"),

@@ -24,6 +24,7 @@ from .config import SETTINGS
 from .console import CONSOLE, fmt_bytes, fmt_duration, fmt_timestamp
 from .engine import ENGINE, Cancelled
 from .transcript import from_engine_segment, new_document, normalise, summary
+from . import vocabulary
 
 # How often a long decode reports progress to the console, in segments.
 CONSOLE_SEGMENT_STRIDE = 5
@@ -391,13 +392,22 @@ class JobQueue:
         projects.set_status(slug, doc_id, "transcribing", "Transcribing")
 
         glossary = (project.get("glossary") or "").strip()
-        overrides = {}
+        profile = vocabulary.get_profile(project.get("vocabulary_profile_id"))
+        overrides = vocabulary.transcription_overrides(settings, glossary, profile)
         if glossary and not (settings.get("initial_prompt") or "").strip():
-            overrides["initial_prompt"] = glossary
             CONSOLE.info(
                 "Using the project glossary as the initial prompt to improve "
                 "spelling of names and jargon.",
                 characters=len(glossary),
+            )
+        if profile:
+            profile_settings = profile.get("settings") or {}
+            target_key = profile.get("target")
+            CONSOLE.info(
+                f"Using vocabulary profile '{profile.get('name')}' "
+                "and its study settings.",
+                profile_id=profile.get("id"), target=target_key,
+                preset_settings=profile_settings,
             )
 
         collected: list = []
@@ -452,10 +462,45 @@ class JobQueue:
             language_probability=result["language_probability"],
             engine=result["params"],
         )
+        # The decoder needs the vocabulary, but project exports should not expose
+        # it through engine-parameter provenance unless the transcript itself does.
+        doc["engine"] = vocabulary.redact_engine_params(doc.get("engine") or {})
+        profile_settings = (profile or {}).get("settings") or {}
+        provenance_settings = {
+            key: overrides.get(key, settings.get(key))
+            for key in (
+                "model", "device", "compute_type", "language", "task", "beam_size",
+                "best_of", "multilingual", "vad_filter",
+            )
+            if overrides.get(key, settings.get(key)) is not None
+        }
+        doc["provenance"] = {
+            "vocabulary_profile": ({
+                "id": profile.get("id"),
+                "name": profile.get("name"),
+                "target": profile.get("target"),
+                "settings": dict(profile_settings),
+            } if profile else None),
+            "transcription_settings": provenance_settings,
+            "vocabulary_sources": [
+                source for source, active in (
+                    ("profile", bool(profile and profile.get("terms"))),
+                    ("project_glossary", bool(glossary and not settings.get("initial_prompt"))),
+                    ("global_initial_prompt", bool(settings.get("initial_prompt"))),
+                    ("global_hotwords", bool(settings.get("hotwords"))),
+                ) if active
+            ],
+            "recorded_at": _now(),
+        }
         doc["segments"] = collected
         doc["stats"] = result["stats"]
         normalise(doc)
         projects.save_transcript(slug, doc_id, doc, revision=False)
+        projects.update_document(
+            slug, doc_id,
+            engine=dict(doc.get("engine") or {}),
+            provenance=dict(doc.get("provenance") or {}),
+        )
 
         info_summary = summary(doc)
         stats = result["stats"]
