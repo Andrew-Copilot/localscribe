@@ -838,6 +838,17 @@ async def api_open_project_snapshots(slug: str):
     return {"opened": opened}
 
 
+@app.post("/api/snapshots/open")
+async def api_open_snapshots():
+    try:
+        folder = projects.snapshot_root_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        opened = projects.reveal(folder)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"opened": opened}
+
+
 @app.get("/api/projects/{slug}/activity")
 async def api_project_activity(slug: str):
     try:

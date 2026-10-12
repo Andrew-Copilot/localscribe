@@ -550,11 +550,17 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
             raise ProjectError(str(exc)) from exc
 
 
+def snapshot_root_dir() -> Path:
+    root = PATHS.projects / ".snapshots"
+    if root.is_symlink():
+        raise ProjectError("Snapshot location is not safe.")
+    return root
+
+
 def local_snapshot_dir(slug: str) -> Path:
     """Return a hidden, app-managed location that survives project deletion."""
-    root = PATHS.projects / ".snapshots"
-    directory = root / slugify(slug)
-    if root.is_symlink() or directory.is_symlink():
+    directory = snapshot_root_dir() / slugify(slug)
+    if directory.is_symlink():
         raise ProjectError("Snapshot location is not safe.")
     return directory
 

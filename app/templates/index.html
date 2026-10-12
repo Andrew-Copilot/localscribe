@@ -97,6 +97,7 @@
 {% if activity %}
 <section class="card" aria-labelledby="activity-title">
   <h2 id="activity-title">Recent local recovery activity</h2>
+  <p><button type="button" class="btn btn-quiet btn-small" id="open-snapshots-folder-btn">Open local snapshot folder</button></p>
   <ol class="small">
     {% for event in activity|reverse %}
     <li>

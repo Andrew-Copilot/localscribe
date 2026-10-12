@@ -65,6 +65,9 @@ def test_local_snapshot_and_safe_restore_choices():
         conflict = projects.import_project(archive, mode="prompt")
         check("prompt restore reports conflicts without replacing", conflict.get("conflict") is True)
         check("conflict leaves local project intact", projects.load_project(slug)["title"] == "Local version")
+        renamed = projects.import_project(archive, mode="rename")
+        check("explicit rename keeps both projects", renamed["slug"] == f"{slug}-2")
+        check("rename does not alter the existing project", projects.load_project(slug)["title"] == "Local version")
 
         restored = projects.import_project(archive, mode="replace", snapshot_before=True)
         check("explicit replace restores incoming project", restored["title"] == source["title"])

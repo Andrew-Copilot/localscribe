@@ -104,9 +104,22 @@
         location.href = `/project/${result.project.slug}`;
       } catch (err) {
         LS.toast(`Import failed: ${err.message}`, 'error', 10000);
+      } finally {
         importBtn.disabled = false;
         importBtn.textContent = 'Import project';
         importInput.value = '';
+      }
+    });
+  }
+
+  const openSnapshotsButton = document.getElementById('open-snapshots-folder-btn');
+  if (openSnapshotsButton) {
+    openSnapshotsButton.addEventListener('click', async () => {
+      try {
+        const result = await LS.post('/api/snapshots/open', {});
+        if (!result.opened) LS.toast('The snapshot folder could not be opened.', 'warn');
+      } catch (err) {
+        LS.toast(err.message, 'error');
       }
     });
   }

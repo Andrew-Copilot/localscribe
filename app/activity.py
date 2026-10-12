@@ -37,13 +37,15 @@ def record(project_slug: str, action: str, outcome: str, **details) -> dict:
             events = []
         events = [item for item in events if isinstance(item, dict)]
         events.append(event)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(path.name + ".tmp")
+        temporary = None
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(path.name + ".tmp")
             temporary.write_text(json.dumps(events[-_MAX_EVENTS:], indent=2), encoding="utf-8")
             temporary.replace(path)
         except OSError:
-            temporary.unlink(missing_ok=True)
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
     return event
 
 
