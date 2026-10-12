@@ -28,6 +28,106 @@ MAX_CUSTOM_PATTERN_LENGTH = 240
 MAX_ITEMS = 2000
 
 
+def _validate_custom_pattern(pattern: str) -> None:
+    """Limit custom expressions to a small subset with bounded backtracking."""
+    index = 0
+    depth = 0
+    previous_atom = None
+    unbounded_repeats = 0
+    bounded_repeats = 0
+
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "\\":
+            if index + 1 >= len(pattern):
+                raise ValueError("Custom patterns cannot end with an escape.")
+            escaped = pattern[index + 1]
+            if escaped.isdigit() or escaped in {"g", "k"}:
+                raise ValueError("Backreferences are not allowed in custom patterns.")
+            previous_atom = "atom"
+            index += 2
+            continue
+
+        if char == "[":
+            end = index + 1
+            if end < len(pattern) and pattern[end] == "^":
+                end += 1
+            if end < len(pattern) and pattern[end] == "]":
+                end += 1
+            while end < len(pattern):
+                if pattern[end] == "\\":
+                    end += 2
+                elif pattern[end] == "]":
+                    break
+                else:
+                    end += 1
+            if end >= len(pattern):
+                raise ValueError("Custom patterns must have balanced character classes.")
+            previous_atom = "atom"
+            index = end + 1
+            continue
+
+        if char == "(":
+            if pattern.startswith("(?", index) and not pattern.startswith("(?:", index):
+                raise ValueError("Lookarounds and special groups are not allowed in custom patterns.")
+            depth += 1
+            if depth > 8:
+                raise ValueError("Custom patterns may not nest more than 8 groups.")
+            previous_atom = None
+            index += 3 if pattern.startswith("(?:", index) else 1
+            continue
+
+        if char == ")":
+            if depth == 0:
+                raise ValueError("Custom patterns must have balanced groups.")
+            depth -= 1
+            previous_atom = "group"
+            index += 1
+            continue
+
+        if char in "*+?{":
+            if previous_atom != "atom":
+                raise ValueError("Custom pattern quantifiers must follow a literal or character class.")
+            if char in "*+":
+                unbounded_repeats += 1
+                if unbounded_repeats > 1:
+                    raise ValueError("Use at most one unbounded repetition in a custom pattern.")
+                index += 1
+            elif char == "?":
+                bounded_repeats += 1
+                index += 1
+            else:
+                end = pattern.find("}", index + 1)
+                if end < 0:
+                    raise ValueError("Custom pattern repetitions must have a finite upper bound.")
+                bounds = pattern[index + 1:end].split(",")
+                try:
+                    lower = int(bounds[0])
+                    upper = int(bounds[-1])
+                except (ValueError, IndexError) as exc:
+                    raise ValueError("Custom pattern repetitions must have numeric bounds.") from exc
+                if (
+                    len(bounds) > 2 or lower < 0 or upper < lower
+                    or upper > 100
+                ):
+                    raise ValueError("Custom pattern repetition bounds must be between 0 and 100.")
+                bounded_repeats += upper
+                index = end + 1
+            if bounded_repeats > 1000:
+                raise ValueError("Custom patterns contain too much bounded repetition.")
+            previous_atom = None
+            continue
+
+        if char in "^$|":
+            previous_atom = None
+        else:
+            previous_atom = "atom"
+        index += 1
+
+    if depth:
+        raise ValueError("Custom patterns must have balanced groups.")
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
@@ -85,8 +185,7 @@ def _clean_custom_patterns(patterns) -> list[dict]:
         pattern = str(raw.get("pattern") or "")
         if not label or not pattern or len(pattern) > MAX_CUSTOM_PATTERN_LENGTH:
             raise ValueError("Custom patterns need a label and a regex of 240 characters or fewer.")
-        if re.search(r"\((?:[^()]|\\.)*[+*](?:[^()]|\\.)*\)[+*{]", pattern):
-            raise ValueError("Nested repeating groups are not allowed in custom patterns.")
+        _validate_custom_pattern(pattern)
         try:
             re.compile(pattern, re.IGNORECASE)
         except re.error as exc:

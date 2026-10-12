@@ -47,6 +47,23 @@ def sample_transcript():
     return doc
 
 
+def test_custom_patterns_reject_unbounded_backtracking():
+    safe = deidentification._clean_custom_patterns([
+        {"label": "Case", "pattern": r"\bCASE-\d{5}\b"},
+    ])
+    check("bounded identifier expressions remain supported", len(safe) == 1)
+    for pattern in (r"(a+)+$", r"a+b+$", r"(a|aa)+$", r"a{1,}"):
+        try:
+            deidentification._clean_custom_patterns([
+                {"label": "Unsafe", "pattern": pattern},
+            ])
+        except ValueError:
+            rejected = True
+        else:
+            rejected = False
+        check(f"unsafe custom expression is rejected: {pattern}", rejected)
+
+
 def test_replacements_are_explicit_reversible_and_revision_tracked():
     with project_root() as root:
         project = projects.create_project("Synthetic de-identification")
@@ -117,6 +134,7 @@ def test_replacements_are_explicit_reversible_and_revision_tracked():
 
 
 def main() -> int:
+    test_custom_patterns_reject_unbounded_backtracking()
     test_replacements_are_explicit_reversible_and_revision_tracked()
     if FAILURES:
         print(f"\n{len(FAILURES)} check(s) failed: {FAILURES}")
