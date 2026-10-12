@@ -41,6 +41,7 @@ from .config import (
 from .console import CONSOLE, fmt_bytes
 from .engine import ENGINE, EngineError
 from .jobs import QUEUE
+from .sensitivity import SENSITIVITY_LABELS
 from .realign import describe_report, retimestamp
 from .transcript import (
     LOW_CONFIDENCE,
@@ -180,6 +181,7 @@ def base_context(request: Request, **extra) -> dict:
         "engine": ENGINE.status(),
         "low_confidence": LOW_CONFIDENCE,
         "update": update_check.state(),
+        "sensitivity_labels": SENSITIVITY_LABELS,
     }
     context.update(extra)
     return context
@@ -589,11 +591,14 @@ async def api_create_project(request: Request):
     if not title:
         raise HTTPException(status_code=400, detail="A project title is required.")
     # `title` is passed positionally, so it must not also arrive as a keyword.
-    record = projects.create_project(title, **{
-        k: payload.get(k)
-        for k in projects.EDITABLE_FIELDS
-        if k in payload and k != "title"
-    })
+    try:
+        record = projects.create_project(title, **{
+            k: payload.get(k)
+            for k in projects.EDITABLE_FIELDS
+            if k in payload and k != "title"
+        })
+    except projects.ProjectValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     CONSOLE.success(f"Created project '{record['title']}'", slug=record["slug"])
     return {"project": record}
 
@@ -615,6 +620,8 @@ async def api_update_project(slug: str, request: Request):
     payload = await request.json()
     try:
         record = projects.save_project(slug, payload)
+    except projects.ProjectValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     CONSOLE.info(f"Saved metadata for '{record['title']}'", slug=slug)

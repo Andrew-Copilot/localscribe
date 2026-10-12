@@ -333,6 +333,9 @@
           metaState.className = 'save-state saved';
         }
         LS.toast('Project details saved.', 'ok');
+        const sensitivity = metaForm.elements.namedItem('data_sensitivity');
+        document.getElementById('project-sensitivity').textContent =
+          `User-declared sensitivity: ${sensitivity.selectedOptions[0].textContent}`;
         if (result.project.title) {
           document.querySelector('.page-head h1').textContent = result.project.title;
           document.title = `${result.project.title} - Local Scribe`;
