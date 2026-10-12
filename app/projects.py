@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import PATHS, app_version
+from . import snapshots
+from .sensitivity import DEFAULT_SENSITIVITY, future_backup_gate, normalize_sensitivity, validate_sensitivity
 from .transcript import summary as transcript_summary
 
 PROJECT_FILE = "project.json"
@@ -51,6 +53,7 @@ EDITABLE_FIELDS = (
     "consent_notes",
     "glossary",
     "tags",
+    "data_sensitivity",
 )
 
 _LOCK = threading.RLock()
@@ -59,6 +62,22 @@ _SLUG_CLEAN = re.compile(r"[^a-z0-9]+")
 
 class ProjectError(Exception):
     """A project operation failed for a reason worth showing the user."""
+
+
+class ProjectValidationError(ProjectError):
+    """Incoming project metadata is invalid."""
+
+
+def _validate_sensitivity(value) -> str:
+    try:
+        return validate_sensitivity(value)
+    except ValueError as exc:
+        raise ProjectValidationError(str(exc)) from exc
+
+
+def _normalize_project(record: dict) -> dict:
+    record["data_sensitivity"] = normalize_sensitivity(record.get("data_sensitivity"))
+    return record
 
 
 def _now() -> str:
@@ -94,7 +113,7 @@ def project_dir(slug: str) -> Path:
         raise ProjectError("Invalid project identifier.")
     path = (PATHS.projects / clean).resolve()
     # Refuse anything that escapes the projects root.
-    if not str(path).startswith(str(PATHS.projects.resolve())):
+    if not path.is_relative_to(PATHS.projects.resolve()):
         raise ProjectError("Invalid project path.")
     return path
 
@@ -149,11 +168,15 @@ def new_project_record(title: str, **fields) -> dict:
         "consent_notes": "",
         "glossary": "",
         "tags": [],
+        "data_sensitivity": DEFAULT_SENSITIVITY,
         "created": _now(),
         "updated": _now(),
         "app_version": app_version(),
     }
     for key in EDITABLE_FIELDS:
+        if key == "data_sensitivity" and key in fields:
+            record[key] = _validate_sensitivity(fields[key])
+            continue
         if key in fields and fields[key] is not None:
             record[key] = fields[key]
     return record
@@ -184,7 +207,7 @@ def load_project(slug: str) -> dict:
     if record is None:
         raise ProjectError(f"Project '{slug}' was not found.")
     record["slug"] = root.name
-    return record
+    return _normalize_project(record)
 
 
 def save_project(slug: str, updates: dict) -> dict:
@@ -194,13 +217,41 @@ def save_project(slug: str, updates: dict) -> dict:
             if key not in updates:
                 continue
             value = updates[key]
-            if key == "tags":
+            if key == "data_sensitivity":
+                value = _validate_sensitivity(value)
+            elif key == "tags":
                 if isinstance(value, str):
                     value = [t.strip() for t in value.split(",")]
                 value = [str(t).strip() for t in (value or []) if str(t).strip()]
             else:
                 value = str(value if value is not None else "").strip()
             record[key] = value
+        record["updated"] = _now()
+        write_json(project_dir(slug) / PROJECT_FILE, record)
+        return record
+
+
+def record_box_health_override(
+    slug: str, destination_root: Path, *, independently_verified_box_health: bool = False
+) -> dict:
+    """Record only the latest explicit attestation, not a reusable permission."""
+    with _LOCK:
+        record = load_project(slug)
+        destination_root = Path(destination_root)
+        result = future_backup_gate(
+            record["data_sensitivity"], destination_root.name,
+            independently_verified_box_health=independently_verified_box_health,
+        )
+        if not result.override_used or not destination_root.is_absolute():
+            raise ProjectValidationError(
+                "An override requires explicit independent Box Health verification "
+                "for a PHI/unknown project and an absolute destination folder path."
+            )
+        record["box_health_override"] = {
+            "confirmed_at": _now(),
+            "destination_root": str(destination_root),
+            "independently_verified_box_health": True,
+        }
         record["updated"] = _now()
         write_json(project_dir(slug) / PROJECT_FILE, record)
         return record
@@ -224,6 +275,7 @@ def list_projects() -> list:
         if record is None:
             continue
         record["slug"] = entry.name
+        _normalize_project(record)
         record["stats"] = project_stats(entry.name)
         out.append(record)
     out.sort(key=lambda r: r.get("updated") or "", reverse=True)
@@ -377,6 +429,7 @@ def touch_project(slug: str) -> None:
     root = project_dir(slug)
     record = read_json(root / PROJECT_FILE)
     if record is not None:
+        _normalize_project(record)
         record["updated"] = _now()
         write_json(root / PROJECT_FILE, record)
 
@@ -478,53 +531,30 @@ def list_outputs(slug: str, doc_id: str) -> list:
 # ---------------------------------------------------------------------------
 
 def export_project(slug: str, dest_dir: Path | None = None, include_media: bool = True) -> Path:
-    """Write a .lsproj archive of an entire project."""
-    record = load_project(slug)
-    root = project_dir(slug)
-    dest_dir = Path(dest_dir or PATHS.logs)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{slug}-{datetime.now().strftime('%Y%m%d-%H%M%S')}{EXPORT_SUFFIX}"
-
-    documents = list_documents(slug)
-    manifest = {
-        "format": "localscribe-project",
-        "format_version": 1,
-        "app_version": app_version(),
-        "exported": _now(),
-        "slug": slug,
-        "title": record.get("title"),
-        "includes_media": bool(include_media),
-        "documents": [
-            {"id": d["id"], "filename": d.get("filename"), "status": d.get("status")}
-            for d in documents
-        ],
-    }
-
-    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(MANIFEST_FILE, json.dumps(manifest, indent=2))
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
-            relative = path.relative_to(root)
-            if not include_media and relative.parts and relative.parts[0] == "media":
-                continue
-            archive.write(path, str(relative).replace("\\", "/"))
-
-    return dest
+    """Write an atomic, checksummed v2 .lsproj snapshot."""
+    with _LOCK:
+        record = load_project(slug)
+        source = PATHS.projects / record["slug"]
+        if source.is_symlink():
+            raise ProjectError("Snapshot source must not contain symbolic links.")
+        try:
+            return snapshots.write_snapshot(
+                source, Path(dest_dir or PATHS.logs), record,
+                app_version=app_version(), created_at=_now(),
+                include_media=bool(include_media),
+            )
+        except snapshots.SnapshotError as exc:
+            raise ProjectError(str(exc)) from exc
 
 
 def inspect_archive(archive_path: Path) -> dict:
     """Read an archive's manifest without extracting anything."""
     try:
         with zipfile.ZipFile(archive_path) as archive:
-            names = archive.namelist()
-            if MANIFEST_FILE not in names:
-                raise ProjectError(
-                    "This file is not a Local Scribe project export: its "
-                    f"manifest ({MANIFEST_FILE}) is missing."
-                )
-            manifest = json.loads(archive.read(MANIFEST_FILE).decode("utf-8"))
-    except zipfile.BadZipFile as exc:
+            manifest = snapshots.read_manifest(archive)
+            if manifest["format_version"] == snapshots.FORMAT_VERSION:
+                snapshots.validate_snapshot(archive)
+    except (zipfile.BadZipFile, snapshots.SnapshotError) as exc:
         raise ProjectError("That file is not a readable archive.") from exc
 
     if manifest.get("format") != "localscribe-project":
@@ -537,7 +567,22 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
 
     ``mode`` is 'rename' (default, keeps both copies) or 'replace'.
     """
-    manifest = inspect_archive(archive_path)
+    try:
+        archive = zipfile.ZipFile(archive_path)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ProjectError("That file is not a readable archive.") from exc
+    with archive:
+        return _import_archive(archive, archive_path, mode)
+
+
+def _import_archive(archive: zipfile.ZipFile, archive_path: Path, mode: str) -> dict:
+    try:
+        manifest = snapshots.read_manifest(archive)
+        if manifest["format_version"] == snapshots.FORMAT_VERSION:
+            snapshots.validate_snapshot(archive)
+        record = snapshots.read_project_metadata(archive)
+    except snapshots.SnapshotError as exc:
+        raise ProjectError(str(exc)) from exc
     incoming = slugify(manifest.get("slug") or manifest.get("title") or "imported")
 
     with _LOCK:
@@ -554,32 +599,23 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
         target = project_dir(slug)
         target.mkdir(parents=True, exist_ok=True)
 
-        with zipfile.ZipFile(archive_path) as archive:
-            for name in archive.namelist():
-                if name == MANIFEST_FILE:
-                    continue
-                # Refuse absolute paths and traversal, whatever the archive says.
-                relative = Path(name.replace("\\", "/"))
-                if relative.is_absolute() or ".." in relative.parts:
-                    continue
-                destination = (target / relative).resolve()
-                if not str(destination).startswith(str(target.resolve())):
-                    continue
-                if name.endswith("/"):
-                    destination.mkdir(parents=True, exist_ok=True)
-                    continue
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(name) as src, open(destination, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
+        for name in archive.namelist():
+            if name == MANIFEST_FILE:
+                continue
+            # Paths were checked before any existing project could be replaced.
+            relative = Path(name)
+            destination = (target / relative).resolve()
+            if not destination.is_relative_to(target.resolve()):
+                raise ProjectError("Archive contains an unsafe destination.")
+            if name.endswith("/"):
+                destination.mkdir(parents=True, exist_ok=True)
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(name) as src, open(destination, "wb") as dst:
+                shutil.copyfileobj(src, dst)
 
-        record = read_json(target / PROJECT_FILE)
-        if record is None:
-            shutil.rmtree(target, ignore_errors=True)
-            raise ProjectError(
-                "The archive did not contain a project.json, so it could not "
-                "be imported."
-            )
         record["slug"] = slug
+        _normalize_project(record)
         if slug != incoming:
             record["title"] = f"{record.get('title') or slug} (imported)"
         record["updated"] = _now()

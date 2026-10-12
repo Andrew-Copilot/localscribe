@@ -16,6 +16,7 @@ import asyncio
 import io
 import json
 import os
+import tempfile
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
@@ -41,6 +42,7 @@ from .config import (
 from .console import CONSOLE, fmt_bytes
 from .engine import ENGINE, EngineError
 from .jobs import QUEUE
+from .sensitivity import SENSITIVITY_LABELS
 from .realign import describe_report, retimestamp
 from .transcript import (
     LOW_CONFIDENCE,
@@ -180,6 +182,7 @@ def base_context(request: Request, **extra) -> dict:
         "engine": ENGINE.status(),
         "low_confidence": LOW_CONFIDENCE,
         "update": update_check.state(),
+        "sensitivity_labels": SENSITIVITY_LABELS,
     }
     context.update(extra)
     return context
@@ -589,11 +592,14 @@ async def api_create_project(request: Request):
     if not title:
         raise HTTPException(status_code=400, detail="A project title is required.")
     # `title` is passed positionally, so it must not also arrive as a keyword.
-    record = projects.create_project(title, **{
-        k: payload.get(k)
-        for k in projects.EDITABLE_FIELDS
-        if k in payload and k != "title"
-    })
+    try:
+        record = projects.create_project(title, **{
+            k: payload.get(k)
+            for k in projects.EDITABLE_FIELDS
+            if k in payload and k != "title"
+        })
+    except projects.ProjectValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     CONSOLE.success(f"Created project '{record['title']}'", slug=record["slug"])
     return {"project": record}
 
@@ -615,6 +621,8 @@ async def api_update_project(slug: str, request: Request):
     payload = await request.json()
     try:
         record = projects.save_project(slug, payload)
+    except projects.ProjectValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     CONSOLE.info(f"Saved metadata for '{record['title']}'", slug=slug)
@@ -795,7 +803,7 @@ async def api_export_project(slug: str, include_media: bool = True):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     CONSOLE.success(
         f"Exported project archive ({fmt_bytes(archive.stat().st_size)})",
-        file=archive.name, include_media=include_media,
+        include_media=include_media,
     )
     return FileResponse(
         archive, filename=archive.name, media_type="application/zip",
@@ -805,8 +813,8 @@ async def api_export_project(slug: str, include_media: bool = True):
 
 @app.post("/api/projects/import")
 async def api_import_project(file: UploadFile, mode: str = Form("rename")):
-    name = file.filename or "archive"
-    staging = PATHS.logs / f"import-{os.getpid()}-{name}"
+    with tempfile.NamedTemporaryFile(prefix="import-", suffix=".tmp", dir=PATHS.logs, delete=False) as tmp:
+        staging = Path(tmp.name)
     try:
         staging.write_bytes(await file.read())
         record = projects.import_project(staging, mode=mode)
@@ -816,9 +824,7 @@ async def api_import_project(file: UploadFile, mode: str = Form("rename")):
         staging.unlink(missing_ok=True)
 
     CONSOLE.success(
-        f"Imported project '{record['title']}' with "
-        f"{record['stats']['documents']} document(s)",
-        slug=record["slug"], source=name,
+        f"Imported project archive with {record['stats']['documents']} document(s)",
     )
     return {"project": record}
 

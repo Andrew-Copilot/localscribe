@@ -36,6 +36,7 @@
           principal_investigator: (data.get('principal_investigator') || '').toString(),
           irb_protocol: (data.get('irb_protocol') || '').toString(),
           description: (data.get('description') || '').toString(),
+          data_sensitivity: data.get('data_sensitivity').toString(),
         });
         location.href = `/project/${result.project.slug}`;
       } catch (err) {
