@@ -257,6 +257,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .badge-run { background: var(--accent-soft); color: var(--accent-dark); border-color: #bcdedb; }
 .badge-warn { background: var(--warn-soft); color: var(--warn); border-color: #f0dcb8; }
 .badge-err { background: var(--error-soft); color: var(--error); border-color: #edc9c7; }
+.health-checks { list-style: none; margin: .7rem 0 0; padding: 0; }
+.health-checks li { display: flex; align-items: baseline; gap: .55rem; margin: .45rem 0; }
+.health-checks .badge { flex: 0 0 auto; }
 
 .notice {
   border: 1px solid var(--line); border-left: 3px solid var(--ink-3);
@@ -436,6 +439,22 @@ canvas.ribbon {
 
 /* Segment list */
 .segments { display: flex; flex-direction: column; gap: .5rem; }
+.review-queue {
+  margin: 0 0 .8rem; padding: .75rem;
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  background: var(--surface-2);
+}
+.review-queue h3 { margin-bottom: .15rem; }
+.review-queue progress { display: block; width: 100%; height: .55rem; margin: .45rem 0 .6rem; accent-color: var(--accent); }
+.review-filters, .review-counts { display: flex; flex-wrap: wrap; gap: .35rem .8rem; }
+.review-filters { margin-bottom: .45rem; }
+.review-filters .chk { font-size: .77rem; }
+.review-counts { color: var(--ink-3); font-size: .73rem; }
+.review-counts span { white-space: nowrap; }
+.review-items { display: flex; flex-direction: column; gap: .25rem; margin: .55rem 0 0; padding: 0; list-style: none; }
+.review-item { display: flex; align-items: center; gap: .45rem; min-width: 0; padding: .3rem .4rem; border-radius: 4px; background: var(--surface); }
+.review-item-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-item .btn { flex: 0 0 auto; }
 .seg {
   display: grid; grid-template-columns: 92px minmax(0, 1fr);
   gap: .7rem; padding: .55rem .6rem;
@@ -446,6 +465,7 @@ canvas.ribbon {
 .seg.active { border-color: var(--accent); background: var(--accent-soft); }
 .seg.edited { border-left: 3px solid var(--warn); }
 .seg.stale { background: var(--warn-soft); }
+.seg.review-target { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .seg-time {
   display: flex; flex-direction: column; gap: .25rem; align-items: flex-start;

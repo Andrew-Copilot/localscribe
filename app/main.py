@@ -30,10 +30,13 @@ from . import (
     activity,
     box_sync,
     catalog,
+    diagnostics,
     exporters,
+    health,
     media,
     proofread,
     projects,
+    review,
     update_check,
     winlibs,
 )
@@ -211,7 +214,10 @@ async def page_index(request: Request):
             request,
             projects=projects.list_projects(),
             snapshots=projects.list_all_snapshots(),
-            activities=activity.recent(),
+            activities=[
+                event for event in activity.recent()
+                if activity.category(event.get("action")) == "recovery"
+            ],
         ),
     )
 
@@ -231,7 +237,12 @@ async def page_project(request: Request, slug: str):
             documents=projects.list_documents(slug),
             stats=projects.project_stats(slug),
             snapshots=projects.list_snapshots(slug),
-            activities=activity.recent(project.get("project_id") or project["slug"]),
+            activities=[
+                event for event in activity.recent(
+                    project.get("project_id") or project["slug"]
+                )
+                if activity.category(event.get("action")) == "recovery"
+            ],
             box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
             accepted=sorted(media.MEDIA_EXTENSIONS),
         ),
@@ -282,8 +293,38 @@ async def page_settings(request: Request):
             schema=SETTINGS_SCHEMA,
             values=SETTINGS.all(),
             catalog=catalog.catalog_payload(hardware),
+            health=health.run(model_key=SETTINGS.get("model")),
             advanced_raw=json.dumps(SETTINGS.get("advanced_raw") or {}, indent=2),
             is_git_checkout=update_check.is_git_checkout(),
+        ),
+    )
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def page_privacy(request: Request):
+    events = activity.recent()
+    for event in events:
+        event["category"] = activity.category(event.get("action"))
+    last_remote_action = next(
+        (event for event in reversed(events)
+         if event["category"] == "network"),
+        None,
+    )
+    return templates.TemplateResponse(
+        request,
+        "privacy.html",
+        base_context(
+            request,
+            values=SETTINGS.all(),
+            storage_paths={
+                "projects": str(PATHS.projects),
+                "models": str(PATHS.models),
+                "logs": str(PATHS.logs),
+                "settings": str(PATHS.settings_file),
+            },
+            activities=events,
+            last_remote_action=last_remote_action,
+            activity_labels=activity.LABELS,
         ),
     )
 
@@ -335,6 +376,18 @@ async def api_status():
 @app.get("/api/console")
 async def api_console(since: int = 0, limit: int = 500):
     return {"events": CONSOLE.history(since=since, limit=limit)}
+
+
+@app.get("/api/diagnostics")
+async def api_diagnostics():
+    """Preview an allow-listed diagnostics document; never persists it."""
+    return diagnostics.build(ENGINE.status())
+
+
+@app.get("/api/health")
+async def api_health():
+    """Inspect local storage and runtime state without making network requests."""
+    return health.run(model_key=SETTINGS.get("model"))
 
 
 @app.websocket("/ws/console")
@@ -430,11 +483,17 @@ async def api_save_settings(request: Request):
                 configured=bool(changed["box_sync_destination"]),
             )
     if "offline_lock" in changed:
+        activity.record(
+            "offline_lock_changed",
+            outcome="engaged" if changed["offline_lock"] else "released",
+        )
         CONSOLE.warn(
             "Offline lock engaged: outbound network access is now blocked."
             if changed["offline_lock"] else
             "Offline lock released: model downloads are possible again."
         )
+    if {"check_for_updates", "box_sync_destination"} & set(changed):
+        activity.record("network_settings_changed", outcome="completed")
 
     reload_keys = {"model", "device", "compute_type", "cpu_threads", "num_workers"}
     if reload_keys & set(changed):
@@ -446,7 +505,17 @@ async def api_save_settings(request: Request):
 
 @app.post("/api/settings/reset")
 async def api_reset_settings():
+    before = SETTINGS.all()
     values = SETTINGS.reset()
+    if before.get("offline_lock") != values.get("offline_lock"):
+        activity.record(
+            "offline_lock_changed",
+            outcome="engaged" if values["offline_lock"] else "released",
+        )
+    if any(before.get(key) != values.get(key) for key in (
+        "check_for_updates", "box_sync_destination",
+    )):
+        activity.record("network_settings_changed", outcome="completed")
     ENGINE.unload()
     CONSOLE.warn("Settings restored to defaults.")
     return {"values": values, "engine": ENGINE.status()}
@@ -463,7 +532,11 @@ async def api_download_model(model_key: str):
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Unknown model '{model_key}'.")
     if catalog.is_downloaded(model_key):
-        return {"already": True, "job": None}
+        return {
+            "already": True,
+            "job": None,
+            "disk_estimate": catalog.disk_estimate(model_key),
+        }
     if SETTINGS.get("offline_lock"):
         raise HTTPException(
             status_code=409,
@@ -471,7 +544,11 @@ async def api_download_model(model_key: str):
                    "download a model, then turn it back on.",
         )
     job = QUEUE.submit_download(model_key)
-    return {"already": False, "job": job.to_dict()}
+    return {
+        "already": False,
+        "job": job.to_dict(),
+        "disk_estimate": catalog.disk_estimate(model_key),
+    }
 
 
 @app.delete("/api/models/{model_key}")
@@ -521,16 +598,26 @@ async def api_install_gpu_support():
     if not req.exists():
         raise HTTPException(status_code=500, detail="requirements-gpu.txt is missing.")
 
+    activity.record("gpu_support_install", outcome="started")
     CONSOLE.step("Installing GPU support libraries (cuBLAS 12, cuDNN 9) via pip")
-    proc = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-r", str(req)],
-        capture_output=True, text=True,
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", str(req)],
+            capture_output=True, text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        activity.record("gpu_support_install", outcome="failed")
+        CONSOLE.error("GPU support installation could not start.")
+        raise HTTPException(
+            status_code=500,
+            detail="GPU support installation could not start. See the console.",
+        ) from exc
     tail = (proc.stdout or "").strip().splitlines()[-6:]
     for line in tail:
         CONSOLE.debug(f"  pip: {line}")
 
     if proc.returncode != 0:
+        activity.record("gpu_support_install", outcome="failed")
         CONSOLE.error("GPU support installation failed.", returncode=proc.returncode)
         CONSOLE.debug("pip stderr", stderr=(proc.stderr or "")[-2000:])
         raise HTTPException(
@@ -539,6 +626,7 @@ async def api_install_gpu_support():
                    "for details.",
         )
 
+    activity.record("gpu_support_install", outcome="completed")
     winlibs.prepare()  # put the new site-packages/nvidia/*/bin on the path
     hardware = ENGINE.hardware(refresh=True)
     ENGINE.unload()
@@ -596,7 +684,16 @@ async def api_update_apply():
             detail="The offline lock is engaged, so Local Scribe cannot pull "
                    "an update. Turn it off first.",
         )
-    result = update_check.apply_git_update()
+    activity.record("update_apply", outcome="started")
+    try:
+        result = update_check.apply_git_update()
+    except Exception:
+        activity.record("update_apply", outcome="failed")
+        raise
+    activity.record(
+        "update_apply",
+        outcome="completed" if result["ok"] else "failed",
+    )
     if not result["ok"]:
         raise HTTPException(status_code=500, detail=result["message"])
     return result
@@ -1139,6 +1236,27 @@ async def api_assign_speaker(slug: str, doc_id: str, request: Request):
         ],
         "summary": summary(doc),
     }
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/review")
+async def api_review_action(slug: str, doc_id: str, request: Request):
+    """Persist a queue resolution or a manual segment flag in the transcript."""
+    payload = await request.json()
+    doc = _load_doc_or_404(slug, doc_id)
+    try:
+        state = review.apply_action(
+            doc,
+            payload.get("segment_id"),
+            str(payload.get("category") or ""),
+            str(payload.get("action") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    projects.save_transcript(
+        slug, doc_id, doc, revision=False,
+        keep=int(SETTINGS.get("autosave_revisions") or 20),
+    )
+    return {"review": state, "updated": doc.get("updated")}
 
 
 @app.post("/api/projects/{slug}/documents/{doc_id}/proofread")

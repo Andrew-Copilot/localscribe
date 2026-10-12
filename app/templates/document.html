@@ -152,6 +152,30 @@
         </div>
       </div>
 
+      <section class="review-queue" id="review-queue" aria-labelledby="review-title">
+        <div class="row">
+          <div class="grow">
+            <h3 id="review-title">Review Mode</h3>
+            <p class="small muted" id="review-progress">Preparing review queue…</p>
+          </div>
+          <button type="button" class="btn btn-small btn-primary" id="review-next">
+            Next unresolved
+          </button>
+        </div>
+        <progress id="review-progress-bar" max="100" value="0"
+                  aria-label="Review completion"></progress>
+        <div class="review-filters" aria-label="Review queue filters">
+          <label class="chk"><input type="checkbox" data-review-filter="low_confidence" checked> Low confidence</label>
+          <label class="chk"><input type="checkbox" data-review-filter="artifact" checked> Possible artifacts</label>
+          <label class="chk"><input type="checkbox" data-review-filter="unassigned" checked> Unassigned speakers</label>
+          <label class="chk"><input type="checkbox" data-review-filter="flagged" checked> Flags</label>
+          <label class="chk"><input type="checkbox" data-review-filter="changed" checked> Changed since validation</label>
+        </div>
+        <div class="review-counts" id="review-counts" aria-live="polite"></div>
+        <p class="small muted" id="review-empty" hidden>Nothing unresolved matches these filters.</p>
+        <ol class="review-items" id="review-items"></ol>
+      </section>
+
       <div id="stale-warning" class="notice notice-warn" hidden>
         <strong>Timings are out of date</strong>
         <span id="stale-text"></span>
@@ -315,5 +339,6 @@
 <script src="/static/js/speakers.js"></script>
 <script src="/static/js/findreplace.js"></script>
 <script src="/static/js/proofread.js"></script>
+<script src="/static/js/review.js"></script>
 {% endif %}
 {% endblock %}

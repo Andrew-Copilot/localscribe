@@ -35,7 +35,10 @@ quality-of-life features like being able to quickly replay segments,
 visualizing words the AI system has low confidence in categorizing, and
 having timestamps clearly marked. It is intended to do the hard work of
 getting a first draft done and increasing the speed by which humans validate
-and de-identify transcripts for research. All data are protected as well,
+and de-identify transcripts for research. Review Mode queues uncertain,
+possibly-artifactual, unassigned, flagged, and recently changed segments;
+its progress travels with project exports. See the
+[Review Mode guide](docs/review-mode.md). All data are protected as well,
 giving you assurance for your subjects' privacy.
 
 Local Scribe transcribes audio and video with OpenAI's Whisper models entirely
@@ -234,6 +237,21 @@ without source media. Transient caches and logs are excluded. Older archives
 remain importable, but their contents cannot be checksum-verified; Local Scribe
 warns when one is imported.
 
+### Privacy Center
+
+Open **Privacy Center** in the top navigation to review Offline Lock, the
+explicitly configured local Box Sync backup folder, local storage locations,
+the last network-affecting action, and a bounded activity history for network
+and recovery actions. AI Settings also offers local-only health checks for free
+storage, data-folder access, selected model files, and the supported Python
+runtime. Model downloads show their estimated transfer size and a recommended
+free-space reserve before starting. These checks inspect local state only; they
+make no outbound requests and send no data off the computer. Diagnostics are
+generated as an on-screen preview and are not saved unless you inspect the
+preview and choose **Save diagnostics JSON**.
+The preview contains only reviewed runtime and settings status; it excludes
+media, transcript content, tokens, and user paths.
+
 ## Options
 
 ```
@@ -289,6 +307,8 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_sensitivity   # project declarations and future backup policy
 .venv/Scripts/python.exe -m tests.test_project_archives # archive integrity and legacy compatibility
 .venv/Scripts/python.exe -m tests.test_recovery       # local snapshots and recovery safeguards
+.venv/Scripts/python.exe -m tests.test_privacy_center # sanitized diagnostics and activity history
+.venv/Scripts/python.exe -m tests.test_health         # local health and model disk estimates
 .venv/Scripts/python.exe -m tests.test_box_sync       # local Box Sync copy safeguards
 .venv/Scripts/python.exe -m tests.test_speakers       # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts

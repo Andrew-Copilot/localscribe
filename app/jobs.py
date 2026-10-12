@@ -19,7 +19,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import catalog, exporters, media, projects
+from . import activity, catalog, exporters, media, projects
 from .config import SETTINGS
 from .console import CONSOLE, fmt_bytes, fmt_duration, fmt_timestamp
 from .engine import ENGINE, Cancelled
@@ -138,6 +138,7 @@ class JobQueue:
     def submit_download(self, model_key: str) -> Job:
         spec = catalog.model_spec(model_key)
         label = f"Download {spec.label if spec else model_key}"
+        activity.record("model_download", outcome="started")
         return self.submit(Job("download", label, model=model_key))
 
     # -- queries -----------------------------------------------------------
@@ -258,6 +259,13 @@ class JobQueue:
 
             finally:
                 job.finished_at = _now()
+                if job.kind == "download":
+                    outcome = {
+                        "done": "complete",
+                        "failed": "failed",
+                        "cancelled": "cancelled",
+                    }.get(job.status, "failed")
+                    activity.record("model_download", outcome=outcome)
                 self._current = None
 
     def _mark_document(self, job: Job, status: str, detail: str, error: str | None = None) -> None:

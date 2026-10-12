@@ -303,6 +303,19 @@ def model_spec(key: str) -> ModelSpec | None:
     return CATALOG_BY_KEY.get(key)
 
 
+def disk_estimate(key: str) -> dict:
+    """Estimate transfer size and free space to reserve for a model download."""
+    spec = model_spec(key)
+    download_bytes = spec.download_mb * 1_000_000 if spec else 0
+    # Leave ten percent for filesystem metadata and differences from catalogue
+    # estimates; the weights remain in the Hugging Face cache after download.
+    recommended_free_bytes = int(download_bytes * 1.1 + 0.5)
+    return {
+        "download_bytes": download_bytes,
+        "recommended_free_bytes": recommended_free_bytes,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Local model storage
 # ---------------------------------------------------------------------------
@@ -776,6 +789,7 @@ def catalog_payload(hardware: dict | None = None) -> dict:
     models = []
     for spec in CATALOG:
         entry = asdict(spec)
+        entry.update(disk_estimate(spec.key))
         entry["downloaded"] = is_downloaded(spec.key)
         entry["disk_bytes"] = model_disk_bytes(spec.key) if entry["downloaded"] else 0
         entry["recommended"] = spec.key == rec["model"]
