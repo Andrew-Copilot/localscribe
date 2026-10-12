@@ -19,6 +19,7 @@
   const D = window.DOC;
   if (!D || !window.LSEditor) return;
   if (!D.proofreading || !D.proofreading.available) return;
+  if (D.proofreading.language_supported === false) return;
   if (!D.proofreading.spelling && !D.proofreading.artefacts) return;
 
   const supportsHighlights = typeof CSS !== 'undefined' && 'highlights' in CSS;

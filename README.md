@@ -52,7 +52,13 @@ transcript against the audio. There is no cloud transcription service, account,
 telemetry, or third-party asset in the interface; any review package or backup
 is created only when you explicitly request it.
 
-In this version, this app is for English-only texts. It may handle multilingual transcription and accents well via the Whisper AI models used, but additional language outputs are not yet available. Multiple-language testing has not yet been conducted.
+English is the only language with end-to-end validated proofreading and user
+workflow coverage. Whisper multilingual models can detect or transcribe other
+languages, and UTF-8 transcript exports preserve their text, but transcription
+accuracy and the full review experience have not been validated for other
+languages. Proofreading is disabled for non-English and unknown-language
+transcripts rather than applying English rules. See the
+[language support boundary](docs/multilingual-support.md).
 
 > **Disclaimer.** Local Scribe is provided **"AS IS", without warranty of any
 > kind**, express or implied. The authors and the UIC TRAILblazer Lab are
@@ -109,6 +115,8 @@ packaging/linux/build-appimage.sh     # -> dist/linux/*.AppImage
 
 `.github/workflows/build-installers.yml` builds and smoke-tests all three
 on every push, and attaches them to a GitHub Release when one is published.
+The current unsigned state and future signing/MSIX decision are documented in
+the [distribution feasibility record](docs/distribution-feasibility.md).
 
 ### Giving permissions for the launcher to run
 
@@ -345,6 +353,8 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_vocabulary    # reusable profiles and presets
 .venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery
 .venv/Scripts/python.exe -m tests.test_engine_fallback  # GPU-to-CPU fallback
+.venv/Scripts/python.exe -m tests.test_accessibility   # accessibility baseline
+.venv/Scripts/python.exe -m tests.test_workflow_e2e     # synthetic workflow + golden exports
 ```
 
 On macOS and Linux use `.venv/bin/python` instead.

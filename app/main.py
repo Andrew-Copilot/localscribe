@@ -290,6 +290,9 @@ async def page_document(request: Request, slug: str, doc_id: str):
                 "spelling": bool(SETTINGS.get("proofread_spelling", True)),
                 "artefacts": bool(SETTINGS.get("proofread_artefacts", True)),
                 "available": proofread.DICTIONARY.available,
+                "language_supported": proofread.supports_language(
+                    (doc or {}).get("language")
+                ),
             },
         ),
     )
@@ -1643,6 +1646,12 @@ async def api_proofread(slug: str, doc_id: str, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     doc = projects.load_transcript(slug, doc_id) or {}
+    if not proofread.supports_language(doc.get("language")):
+        return {
+            "issues": {},
+            "enabled": False,
+            "reason": "Proofreading is currently supported for English transcripts only.",
+        }
     profile = vocabulary.get_profile(project.get("vocabulary_profile_id"))
     extra = proofread.extra_words(
         project.get("glossary"),

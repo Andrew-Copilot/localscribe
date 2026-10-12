@@ -96,6 +96,14 @@ class Dictionary:
 DICTIONARY = Dictionary()
 
 
+def supports_language(language: str | None) -> bool:
+    """The bundled dictionaries and transcription-artefact checks are English-only."""
+    if not isinstance(language, str):
+        return False
+    code = language.strip().replace("_", "-").split("-", 1)[0].lower()
+    return code == "en"
+
+
 def normalise_token(token: str) -> str:
     return token.replace("’", "'").strip("'-").lower()
 
