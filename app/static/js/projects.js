@@ -60,7 +60,28 @@
 
       const body = new FormData();
       body.append('file', file);
-      body.append('mode', 'rename');
+      const replace = confirm(
+        'If a project with this archive’s name already exists, replace it?\n\n' +
+        'Choose Cancel to keep both projects by importing a renamed copy.'
+      );
+      const mode = replace ? 'replace' : 'rename';
+      let snapshotBeforeReplace = null;
+      if (replace) {
+        snapshotBeforeReplace = confirm(
+          'Create a local recovery snapshot before replacing an existing project?\n\n' +
+          'Choose Cancel to skip the snapshot.'
+        ) ? 'yes' : 'no';
+        if (snapshotBeforeReplace === 'no' && !confirm(
+          'Replace an existing project without a recovery snapshot?'
+        )) {
+          importInput.value = '';
+          return;
+        }
+      }
+      body.append('mode', mode);
+      if (snapshotBeforeReplace) {
+        body.append('snapshot_before_replace', snapshotBeforeReplace);
+      }
 
       importBtn.disabled = true;
       importBtn.textContent = 'Importing...';

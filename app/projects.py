@@ -814,8 +814,8 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
 
     ``mode`` is 'rename' (default, keeps both copies) or 'replace'.
     """
-    if mode not in ("rename", "replace"):
-        raise ProjectValidationError("Import mode must be 'rename' or 'replace'.")
+    if mode not in ("rename", "replace", "abort"):
+        raise ProjectValidationError("Import mode must be 'rename', 'replace', or 'abort'.")
 
     PATHS.projects.mkdir(parents=True, exist_ok=True)
     stage = PATHS.projects / f".import-{uuid4().hex}"
@@ -827,6 +827,10 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
             with _LOCK:
                 slug = incoming
                 existing = (PATHS.projects / slug).exists()
+                if existing and mode == "abort":
+                    raise ProjectConflictError(
+                        "A project with this name already exists; choose rename or replace."
+                    )
                 if existing and mode == "rename":
                     counter = 2
                     while (PATHS.projects / f"{incoming}-{counter}").exists():

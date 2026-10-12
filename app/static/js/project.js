@@ -117,11 +117,18 @@
         const name = doc ? doc.filename : 'this file';
         if (!confirm(
           `Remove "${name}"?\n\nThis permanently deletes the media file, its ` +
-          `transcript, and every exported output for it. This cannot be undone.`
+          `transcript, and every exported output for it.`
         )) return;
+        const snapshot = confirm(
+          'Create a local recovery snapshot of the whole project first?\n\n' +
+          'Choose Cancel to continue without a snapshot.'
+        );
         button.disabled = true;
         try {
-          await LS.del(`/api/projects/${encodeURIComponent(slug)}/documents/${encodeURIComponent(id)}`);
+          await LS.del(
+            `/api/projects/${encodeURIComponent(slug)}/documents/` +
+            `${encodeURIComponent(id)}?snapshot=${snapshot}`
+          );
           documents = documents.filter((d) => d.id !== id);
           render();
           LS.toast(`Removed ${name}.`, 'info');
@@ -364,6 +371,69 @@
     });
   }
 
+  const snapshotIncludeMedia = document.getElementById('snapshot-include-media');
+  const createSnapshotBtn = document.getElementById('create-snapshot-btn');
+  if (createSnapshotBtn) {
+    createSnapshotBtn.addEventListener('click', async () => {
+      createSnapshotBtn.disabled = true;
+      try {
+        const result = await LS.post(
+          `/api/projects/${encodeURIComponent(slug)}/snapshots`,
+          { include_media: !snapshotIncludeMedia || snapshotIncludeMedia.checked }
+        );
+        LS.toast('Local recovery snapshot created.', 'ok');
+        const select = document.getElementById('snapshot-select');
+        if (select && result.snapshot) {
+          const option = document.createElement('option');
+          option.value = result.snapshot.snapshot_id;
+          option.textContent =
+            `${result.snapshot.created.slice(0, 19).replace('T', ' ')} · ` +
+            `${result.snapshot.size_bytes.toLocaleString()} bytes`;
+          select.prepend(option);
+          select.value = option.value;
+          document.getElementById('restore-snapshot-btn').disabled = false;
+        }
+        location.reload();
+      } catch (err) {
+        LS.toast(`Could not create a snapshot: ${err.message}`, 'error');
+      } finally {
+        createSnapshotBtn.disabled = false;
+      }
+    });
+  }
+
+  const restoreSnapshotBtn = document.getElementById('restore-snapshot-btn');
+  if (restoreSnapshotBtn) {
+    restoreSnapshotBtn.addEventListener('click', async () => {
+      const select = document.getElementById('snapshot-select');
+      const mode = document.getElementById('snapshot-restore-mode').value;
+      if (!select || !select.value || mode === 'abort') {
+        LS.toast('No restore was performed.', 'info');
+        return;
+      }
+      if (mode === 'replace' && !confirm(
+        'Replace this project with the selected snapshot? A safety snapshot of ' +
+        'the current project will be created first.'
+      )) return;
+      restoreSnapshotBtn.disabled = true;
+      try {
+        const result = await LS.post(
+          `/api/projects/${encodeURIComponent(slug)}/snapshots/` +
+          `${encodeURIComponent(select.value)}/restore`,
+          { mode }
+        );
+        if (result.aborted) {
+          LS.toast('Restore cancelled.', 'info');
+        } else {
+          location.href = `/project/${encodeURIComponent(result.project.slug)}`;
+        }
+      } catch (err) {
+        LS.toast(`Could not restore the snapshot: ${err.message}`, 'error', 10000);
+        restoreSnapshotBtn.disabled = false;
+      }
+    });
+  }
+
   const deleteBtn = document.getElementById('delete-project-btn');
   if (deleteBtn) {
     deleteBtn.addEventListener('click', async () => {
@@ -371,12 +441,17 @@
       if (!confirm(
         `Delete this entire project?\n\nThis permanently removes ` +
         `${LS.plural(count, 'recording')}, all transcripts, and all exported ` +
-        `files. This cannot be undone.\n\nConsider exporting the project first.`
+        `files. Existing recovery snapshots are kept.`
       )) return;
-      if (!confirm('Last check: really delete everything in this project?')) return;
+      const snapshot = confirm(
+        'Create a local recovery snapshot of the whole project first?\n\n' +
+        'Choose Cancel to continue without a new snapshot.'
+      );
 
       try {
-        await LS.del(`/api/projects/${encodeURIComponent(slug)}`);
+        await LS.del(
+          `/api/projects/${encodeURIComponent(slug)}?snapshot=${snapshot}`
+        );
         location.href = '/';
       } catch (err) {
         LS.toast(err.message, 'error');

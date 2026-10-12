@@ -16,16 +16,18 @@ import asyncio
 import io
 import json
 import os
+import tempfile
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
+from uuid import uuid4
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import catalog, exporters, media, proofread, projects, update_check, winlibs
+from . import activity, catalog, exporters, media, proofread, projects, update_check, winlibs
 from .config import (
     APP_NAME,
     HOST,
@@ -214,6 +216,8 @@ async def page_project(request: Request, slug: str):
             project=project,
             documents=projects.list_documents(slug),
             stats=projects.project_stats(slug),
+            snapshots=projects.list_snapshots(slug),
+            activities=activity.recent(project.get("project_id") or project["slug"]),
             accepted=sorted(media.MEDIA_EXTENSIONS),
         ),
     )
@@ -629,12 +633,24 @@ async def api_update_project(slug: str, request: Request):
 
 
 @app.delete("/api/projects/{slug}")
-async def api_delete_project(slug: str):
+async def api_delete_project(slug: str, snapshot: bool | None = None):
+    if snapshot is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose whether to create a recovery snapshot before deleting.",
+        )
     try:
         record = projects.load_project(slug)
+        if snapshot:
+            projects.create_snapshot(slug)
         projects.delete_project(slug)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(
+        "project_delete",
+        record.get("project_id") or record["slug"],
+        "deleted_with_snapshot" if snapshot else "deleted_without_snapshot",
+    )
     CONSOLE.warn(f"Deleted project '{record.get('title')}' and all its files.", slug=slug)
     return {"deleted": True}
 
@@ -700,12 +716,25 @@ async def api_upload(slug: str, files: list[UploadFile]):
 
 
 @app.delete("/api/projects/{slug}/documents/{doc_id}")
-async def api_delete_document(slug: str, doc_id: str):
+async def api_delete_document(slug: str, doc_id: str, snapshot: bool | None = None):
+    if snapshot is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose whether to create a recovery snapshot before deleting.",
+        )
     try:
+        project = projects.load_project(slug)
         record = projects.load_document(slug, doc_id)
+        if snapshot:
+            projects.create_snapshot(slug)
         projects.delete_document(slug, doc_id)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(
+        "document_delete",
+        project.get("project_id") or project["slug"],
+        "deleted_with_snapshot" if snapshot else "deleted_without_snapshot",
+    )
     CONSOLE.warn(f"Deleted {record.get('filename')} and its transcript.", document=doc_id)
     return {"deleted": True, "stats": projects.project_stats(slug)}
 
@@ -794,6 +823,66 @@ async def api_cancel_all():
 # Import / export
 # ---------------------------------------------------------------------------
 
+@app.get("/api/projects/{slug}/snapshots")
+async def api_list_snapshots(slug: str):
+    try:
+        return {"snapshots": projects.list_snapshots(slug)}
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/projects/{slug}/snapshots")
+async def api_create_snapshot(slug: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    include_media = payload.get("include_media", True) if isinstance(payload, dict) else True
+    if not isinstance(include_media, bool):
+        raise HTTPException(status_code=400, detail="'include_media' must be a boolean.")
+    try:
+        project = projects.load_project(slug)
+        snapshot = projects.create_snapshot(slug, include_media=include_media)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record("snapshot_create", project.get("project_id") or project["slug"])
+    CONSOLE.success("Created a local recovery snapshot.", slug=slug)
+    return {"snapshot": snapshot, "snapshots": projects.list_snapshots(slug)}
+
+
+@app.post("/api/projects/{slug}/snapshots/{snapshot_id}/restore")
+async def api_restore_snapshot(slug: str, snapshot_id: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    mode = payload.get("mode", "abort") if isinstance(payload, dict) else "abort"
+    try:
+        project = projects.load_project(slug)
+        if mode == "abort":
+            activity.record("snapshot_restore", project.get("project_id") or project["slug"], "aborted")
+            return {"aborted": True}
+        restored = projects.restore_snapshot(slug, snapshot_id, mode=mode)
+    except projects.ProjectConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except projects.ProjectValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(
+        "snapshot_restore",
+        project.get("project_id") or project["slug"],
+        f"restored_{mode}",
+    )
+    CONSOLE.success("Restored a local recovery snapshot.", slug=restored["slug"])
+    return {"project": restored}
+
+
+@app.get("/api/activity")
+async def api_activity(project_id: str | None = None, limit: int = 50):
+    return {"events": activity.recent(project_id=project_id, limit=limit)}
+
+
 @app.get("/api/projects/{slug}/export")
 async def api_export_project(slug: str, include_media: bool = True):
     try:
@@ -811,17 +900,50 @@ async def api_export_project(slug: str, include_media: bool = True):
 
 
 @app.post("/api/projects/import")
-async def api_import_project(file: UploadFile, mode: str = Form("rename")):
+async def api_import_project(
+    file: UploadFile,
+    mode: str = Form("rename"),
+    snapshot_before_replace: str | None = Form(None),
+):
     name = file.filename or "archive"
-    staging = PATHS.logs / f"import-{os.getpid()}-{name}"
+    staging = PATHS.logs / f"import-{os.getpid()}-{uuid4().hex}.lsproj"
     try:
         staging.write_bytes(await file.read())
+        if mode == "replace" and snapshot_before_replace not in ("yes", "no"):
+            raise HTTPException(
+                status_code=400,
+                detail="Choose whether to create a recovery snapshot before replacing.",
+            )
+        if mode == "replace":
+            manifest = projects.inspect_archive(staging)
+            incoming_slug = projects.slugify(
+                manifest.get("slug") or manifest.get("title") or "imported"
+            )
+            if (
+                snapshot_before_replace == "yes"
+                and projects.project_dir(incoming_slug).exists()
+            ):
+                existing = projects.load_project(incoming_slug)
+                projects.create_snapshot(incoming_slug)
+                activity.record(
+                    "import_replace_snapshot",
+                    existing.get("project_id") or existing["slug"],
+                )
         record = projects.import_project(staging, mode=mode)
+    except HTTPException:
+        raise
     except projects.ProjectError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        status = 409 if isinstance(exc, projects.ProjectConflictError) else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
     finally:
         staging.unlink(missing_ok=True)
 
+    if mode == "replace":
+        activity.record(
+            "import_replace",
+            record.get("project_id") or record["slug"],
+            f"replaced_{snapshot_before_replace}",
+        )
     CONSOLE.success(
         f"Imported project '{record['title']}' with "
         f"{record['stats']['documents']} document(s)",
