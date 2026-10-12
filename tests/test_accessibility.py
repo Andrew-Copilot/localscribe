@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 CSS = ROOT / "app" / "static" / "css" / "app.css"
 BASE = ROOT / "app" / "templates" / "base.html"
 DOCUMENT = ROOT / "app" / "templates" / "document.html"
+SETTINGS = ROOT / "app" / "templates" / "settings.html"
 EDITOR = ROOT / "app" / "static" / "js" / "editor.js"
 SPEAKERS = ROOT / "app" / "static" / "js" / "speakers.js"
 
@@ -51,6 +52,7 @@ def _contrast(first: str, second: str) -> float:
 def test_landmarks_and_keyboard_entry():
     base = BASE.read_text(encoding="utf-8")
     document = DOCUMENT.read_text(encoding="utf-8")
+    settings = SETTINGS.read_text(encoding="utf-8")
     check("skip link targets the main landmark",
           'href="#main-content"' in base and 'id="main-content" tabindex="-1"' in base)
     check("primary navigation has a name and active page state",
@@ -61,6 +63,11 @@ def test_landmarks_and_keyboard_entry():
           and 'role="slider"' in document
           and 'aria-valuemin="0"' in document
           and 'aria-valuenow="0"' in document)
+    check("non-English proofreading limitations are visible",
+          "Proofreading is currently supported for English transcripts only."
+          in document
+          and "not validated" in settings
+          and "model marked multilingual" in settings)
 
 
 def test_keyboard_speaker_workflow_and_color_cues():
