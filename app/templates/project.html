@@ -23,6 +23,20 @@
   </div>
 </div>
 
+<section class="card" aria-labelledby="recovery-title">
+  <h2 id="recovery-title">Local backups and activity</h2>
+  <p class="small muted">
+    Snapshots stay on this computer and are unencrypted. Keep sensitive backups
+    in an appropriately protected location.
+  </p>
+  <div class="row">
+    <button type="button" class="btn" id="create-snapshot-btn">Create local snapshot</button>
+    <button type="button" class="btn btn-quiet" id="open-snapshot-folder-btn">Open snapshot folder</button>
+    <a class="btn btn-quiet" id="snapshot-download-link" hidden>Download latest snapshot</a>
+  </div>
+  <ol class="small" id="project-activity" aria-live="polite"></ol>
+</section>
+
 <!-- Project metadata: explicit save, unlike the transcript editor's autosave -->
 <form class="card" id="meta-form" hidden>
   <h2>Project details</h2>

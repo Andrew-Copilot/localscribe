@@ -12,6 +12,7 @@
     </p>
   </div>
   <div class="row">
+    <a class="btn btn-quiet" href="/privacy">Privacy Center</a>
     <button type="button" class="btn btn-primary" id="new-project-btn">New project</button>
     <button type="button" class="btn" id="import-btn">Import project</button>
     <input type="file" id="import-input" accept=".lsproj,.zip" hidden>
@@ -92,6 +93,22 @@
      your own computer.</p>
   <button type="button" class="btn btn-primary" id="empty-new">Create your first project</button>
 </div>
+{% endif %}
+
+{% if activity %}
+<section class="card" aria-labelledby="activity-title">
+  <h2 id="activity-title">Recent local recovery activity</h2>
+  <p><button type="button" class="btn btn-quiet btn-small" id="open-snapshots-folder-btn">Open local snapshot folder</button></p>
+  <ol class="small">
+    {% for event in activity|reverse %}
+    <li>
+      {{ event.timestamp }} — {{ event.project_slug or 'Local Scribe' }}:
+      {{ event.action|replace('_', ' ') }} ({{ event.outcome }})
+      {% if event.snapshot_created %}, pre-action snapshot created{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+</section>
 {% endif %}
 
 <div class="card" style="margin-top:1.5rem">

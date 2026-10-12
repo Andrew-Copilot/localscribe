@@ -262,7 +262,10 @@ def delete_project(slug: str) -> None:
         root = project_dir(slug)
         if not root.exists():
             raise ProjectError(f"Project '{slug}' was not found.")
-        shutil.rmtree(root, ignore_errors=True)
+        try:
+            shutil.rmtree(root)
+        except OSError as exc:
+            raise ProjectError("The project could not be removed.") from exc
 
 
 def list_projects() -> list:
@@ -547,6 +550,42 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
             raise ProjectError(str(exc)) from exc
 
 
+def snapshot_root_dir() -> Path:
+    root = PATHS.projects / ".snapshots"
+    if root.is_symlink():
+        raise ProjectError("Snapshot location is not safe.")
+    return root
+
+
+def local_snapshot_dir(slug: str) -> Path:
+    """Return a hidden, app-managed location that survives project deletion."""
+    directory = snapshot_root_dir() / slugify(slug)
+    if directory.is_symlink():
+        raise ProjectError("Snapshot location is not safe.")
+    return directory
+
+
+def create_local_snapshot(slug: str, include_media: bool = True) -> Path:
+    try:
+        return export_project(slug, local_snapshot_dir(slug), include_media=include_media)
+    except OSError as exc:
+        raise ProjectError("Snapshot could not be created.") from exc
+
+
+def get_local_snapshot(slug: str, filename: str) -> Path:
+    if (
+        not isinstance(filename, str)
+        or Path(filename).name != filename
+        or not filename.endswith(EXPORT_SUFFIX)
+    ):
+        raise ProjectError("Snapshot not found.")
+    directory = local_snapshot_dir(slug)
+    path = directory / filename
+    if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(directory.resolve()):
+        raise ProjectError("Snapshot not found.")
+    return path
+
+
 def inspect_archive(archive_path: Path) -> dict:
     """Read an archive's manifest without extracting anything."""
     try:
@@ -562,7 +601,9 @@ def inspect_archive(archive_path: Path) -> dict:
     return manifest
 
 
-def import_project(archive_path: Path, mode: str = "rename") -> dict:
+def import_project(
+    archive_path: Path, mode: str = "rename", *, snapshot_before: bool = False,
+) -> dict:
     """Extract a .lsproj archive into projects/.
 
     ``mode`` is 'rename' (default, keeps both copies) or 'replace'.
@@ -572,10 +613,12 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
     except (OSError, zipfile.BadZipFile) as exc:
         raise ProjectError("That file is not a readable archive.") from exc
     with archive:
-        return _import_archive(archive, archive_path, mode)
+        return _import_archive(archive, archive_path, mode, snapshot_before=snapshot_before)
 
 
-def _import_archive(archive: zipfile.ZipFile, archive_path: Path, mode: str) -> dict:
+def _import_archive(
+    archive: zipfile.ZipFile, archive_path: Path, mode: str, *, snapshot_before: bool = False,
+) -> dict:
     try:
         manifest = snapshots.read_manifest(archive)
         if manifest["format_version"] == snapshots.FORMAT_VERSION:
@@ -586,10 +629,27 @@ def _import_archive(archive: zipfile.ZipFile, archive_path: Path, mode: str) -> 
     incoming = slugify(manifest.get("slug") or manifest.get("title") or "imported")
 
     with _LOCK:
+        if mode not in {"prompt", "rename", "replace"}:
+            raise ProjectError("Choose rename or replace for this import.")
         slug = incoming
         if (PATHS.projects / slug).exists():
+            if mode == "prompt":
+                existing = read_json(PATHS.projects / slug / PROJECT_FILE, {})
+                if not isinstance(existing, dict):
+                    existing = {}
+                return {
+                    "conflict": True,
+                    "slug": slug,
+                    "incoming_title": record.get("title") or manifest.get("title") or slug,
+                    "existing_title": existing.get("title") or slug,
+                }
             if mode == "replace":
-                shutil.rmtree(PATHS.projects / slug, ignore_errors=True)
+                if snapshot_before:
+                    create_local_snapshot(slug)
+                try:
+                    shutil.rmtree(PATHS.projects / slug)
+                except OSError as exc:
+                    raise ProjectError("The existing project could not be replaced.") from exc
             else:
                 counter = 2
                 while (PATHS.projects / f"{incoming}-{counter}").exists():

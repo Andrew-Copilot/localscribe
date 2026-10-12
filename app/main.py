@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import catalog, exporters, media, proofread, projects, update_check, winlibs
+from . import activity, catalog, diagnostics, exporters, media, proofread, projects, update_check, winlibs
 from .config import (
     APP_NAME,
     HOST,
@@ -197,7 +197,10 @@ async def page_index(request: Request):
     return templates.TemplateResponse(
         request,
         "index.html",
-        base_context(request, projects=projects.list_projects()),
+        base_context(
+            request, projects=projects.list_projects(),
+            activity=activity.recent(20),
+        ),
     )
 
 
@@ -270,6 +273,35 @@ async def page_settings(request: Request):
     )
 
 
+@app.get("/privacy", response_class=HTMLResponse)
+async def page_privacy(request: Request):
+    events = activity.recent(100)
+    last_network_action = next(
+        (event for event in reversed(events) if event.get("category") == "network"),
+        None,
+    )
+    try:
+        snapshot_root = projects.snapshot_root_dir()
+    except projects.ProjectError:
+        snapshot_root = PATHS.projects / ".snapshots"
+    return templates.TemplateResponse(
+        request,
+        "privacy.html",
+        base_context(
+            request,
+            offline_lock=bool(SETTINGS.get("offline_lock")),
+            check_for_updates=bool(SETTINGS.get("check_for_updates", True)),
+            storage={
+                "projects": str(PATHS.projects),
+                "snapshots": str(snapshot_root),
+                "activity": str(PATHS.logs / "project-activity.json"),
+            },
+            activity=events,
+            last_network_action=last_network_action,
+        ),
+    )
+
+
 @app.get("/about", response_class=HTMLResponse)
 async def page_about(request: Request):
     return templates.TemplateResponse(
@@ -312,6 +344,15 @@ async def api_status():
         "version": app_version(),
         "offline_lock": bool(SETTINGS.get("offline_lock")),
     }
+
+
+@app.get("/api/diagnostics")
+async def api_diagnostics():
+    return diagnostics.build_diagnostics(
+        hardware=ENGINE.hardware(),
+        offline_lock=bool(SETTINGS.get("offline_lock")),
+        check_for_updates=bool(SETTINGS.get("check_for_updates", True)),
+    )
 
 
 @app.get("/api/console")
@@ -444,6 +485,7 @@ async def api_download_model(model_key: str):
             detail="The offline lock is engaged. Turn it off in AI Settings to "
                    "download a model, then turn it back on.",
         )
+    activity.record(None, "model_download", "started", category="network")
     job = QUEUE.submit_download(model_key)
     return {"already": False, "job": job.to_dict()}
 
@@ -496,15 +538,21 @@ async def api_install_gpu_support():
         raise HTTPException(status_code=500, detail="requirements-gpu.txt is missing.")
 
     CONSOLE.step("Installing GPU support libraries (cuBLAS 12, cuDNN 9) via pip")
-    proc = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-r", str(req)],
-        capture_output=True, text=True,
-    )
+    activity.record(None, "gpu_support_install", "started", category="network")
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", str(req)],
+            capture_output=True, text=True,
+        )
+    except OSError as exc:
+        activity.record(None, "gpu_support_install", "failed", category="network")
+        raise HTTPException(status_code=500, detail="GPU support installation could not start.") from exc
     tail = (proc.stdout or "").strip().splitlines()[-6:]
     for line in tail:
         CONSOLE.debug(f"  pip: {line}")
 
     if proc.returncode != 0:
+        activity.record(None, "gpu_support_install", "failed", category="network")
         CONSOLE.error("GPU support installation failed.", returncode=proc.returncode)
         CONSOLE.debug("pip stderr", stderr=(proc.stderr or "")[-2000:])
         raise HTTPException(
@@ -529,6 +577,7 @@ async def api_install_gpu_support():
             "GPU libraries installed, but CUDA is still unavailable. "
             + " ".join(hardware.get("warnings") or [])
         )
+    activity.record(None, "gpu_support_install", "success", category="network")
     return {
         "engine": ENGINE.status(),
         "hardware": hardware,
@@ -570,9 +619,16 @@ async def api_update_apply():
             detail="The offline lock is engaged, so Local Scribe cannot pull "
                    "an update. Turn it off first.",
         )
-    result = update_check.apply_git_update()
+    activity.record(None, "update_apply", "started", category="network")
+    try:
+        result = update_check.apply_git_update()
+    except Exception:
+        activity.record(None, "update_apply", "failed", category="network")
+        raise
     if not result["ok"]:
+        activity.record(None, "update_apply", "failed", category="network")
         raise HTTPException(status_code=500, detail=result["message"])
+    activity.record(None, "update_apply", "success", category="network")
     return result
 
 
@@ -630,12 +686,16 @@ async def api_update_project(slug: str, request: Request):
 
 
 @app.delete("/api/projects/{slug}")
-async def api_delete_project(slug: str):
+async def api_delete_project(slug: str, snapshot: bool = False):
     try:
         record = projects.load_project(slug)
+        if snapshot:
+            projects.create_local_snapshot(slug)
         projects.delete_project(slug)
     except projects.ProjectError as exc:
+        activity.record(slug, "delete_project", "failed", snapshot_created=False)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(slug, "delete_project", "success", snapshot_created=snapshot)
     CONSOLE.warn(f"Deleted project '{record.get('title')}' and all its files.", slug=slug)
     return {"deleted": True}
 
@@ -701,12 +761,16 @@ async def api_upload(slug: str, files: list[UploadFile]):
 
 
 @app.delete("/api/projects/{slug}/documents/{doc_id}")
-async def api_delete_document(slug: str, doc_id: str):
+async def api_delete_document(slug: str, doc_id: str, snapshot: bool = False):
     try:
         record = projects.load_document(slug, doc_id)
+        if snapshot:
+            projects.create_local_snapshot(slug)
         projects.delete_document(slug, doc_id)
     except projects.ProjectError as exc:
+        activity.record(slug, "remove_recording", "failed", snapshot_created=False)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(slug, "remove_recording", "success", snapshot_created=snapshot)
     CONSOLE.warn(f"Deleted {record.get('filename')} and its transcript.", document=doc_id)
     return {"deleted": True, "stats": projects.project_stats(slug)}
 
@@ -795,6 +859,58 @@ async def api_cancel_all():
 # Import / export
 # ---------------------------------------------------------------------------
 
+@app.post("/api/projects/{slug}/snapshots")
+async def api_create_project_snapshot(slug: str):
+    try:
+        archive = projects.create_local_snapshot(slug)
+    except projects.ProjectError as exc:
+        activity.record(slug, "create_snapshot", "failed")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(slug, "create_snapshot", "success")
+    return {"filename": archive.name, "size_bytes": archive.stat().st_size}
+
+
+@app.get("/api/projects/{slug}/snapshots/{filename}")
+async def api_download_project_snapshot(slug: str, filename: str):
+    try:
+        archive = projects.get_local_snapshot(slug, filename)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(archive, filename=archive.name, media_type="application/zip")
+
+
+@app.post("/api/projects/{slug}/snapshots/open")
+async def api_open_project_snapshots(slug: str):
+    try:
+        projects.load_project(slug)
+        folder = projects.local_snapshot_dir(slug)
+        folder.mkdir(parents=True, exist_ok=True)
+        opened = projects.reveal(folder)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"opened": opened}
+
+
+@app.post("/api/snapshots/open")
+async def api_open_snapshots():
+    try:
+        folder = projects.snapshot_root_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        opened = projects.reveal(folder)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"opened": opened}
+
+
+@app.get("/api/projects/{slug}/activity")
+async def api_project_activity(slug: str):
+    try:
+        projects.load_project(slug)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"events": activity.for_project(slug)}
+
+
 @app.get("/api/projects/{slug}/export")
 async def api_export_project(slug: str, include_media: bool = True):
     try:
@@ -812,17 +928,25 @@ async def api_export_project(slug: str, include_media: bool = True):
 
 
 @app.post("/api/projects/import")
-async def api_import_project(file: UploadFile, mode: str = Form("rename")):
+async def api_import_project(
+    file: UploadFile, mode: str = Form("prompt"), snapshot_before: bool = Form(False),
+):
     with tempfile.NamedTemporaryFile(prefix="import-", suffix=".tmp", dir=PATHS.logs, delete=False) as tmp:
         staging = Path(tmp.name)
     try:
         staging.write_bytes(await file.read())
-        record = projects.import_project(staging, mode=mode)
+        record = projects.import_project(staging, mode=mode, snapshot_before=snapshot_before)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         staging.unlink(missing_ok=True)
 
+    if record.get("conflict"):
+        return record
+    activity.record(
+        record["slug"], "restore", "success", mode=mode,
+        snapshot_created=snapshot_before,
+    )
     CONSOLE.success(
         f"Imported project archive with {record['stats']['documents']} document(s)",
     )

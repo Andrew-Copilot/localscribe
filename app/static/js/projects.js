@@ -58,24 +58,77 @@
       const file = importInput.files && importInput.files[0];
       if (!file) return;
 
-      const body = new FormData();
-      body.append('file', file);
-      body.append('mode', 'rename');
-
       importBtn.disabled = true;
       importBtn.textContent = 'Importing...';
       if (window.LSConsole) LSConsole.open();
 
       try {
-        const result = await LS.request('POST', '/api/projects/import', body);
+        let result = await sendImport(file, 'prompt');
+        let mode = 'rename';
+        let snapshotBefore = false;
+        if (result.conflict) {
+          const choice = prompt(
+            `A project named "${result.existing_title}" already exists. ` +
+            `Type RENAME to keep both, REPLACE to overwrite it, or ABORT to cancel.`,
+            'RENAME'
+          );
+          if (choice === null || choice.trim().toUpperCase() === 'ABORT') {
+            LS.toast('Restore cancelled.', 'info');
+            return;
+          }
+          mode = choice.trim().toLowerCase();
+          if (!['rename', 'replace'].includes(mode)) {
+            LS.toast('Type RENAME, REPLACE, or ABORT.', 'warn');
+            return;
+          }
+          if (mode === 'replace') {
+            const replaceChoice = prompt(
+              'Replacing deletes the existing project. Type BACKUP to save an unencrypted ' +
+              'local snapshot first, REPLACE to proceed without a snapshot, or Cancel to abort.',
+              'BACKUP'
+            );
+            if (replaceChoice === null) {
+              LS.toast('Restore cancelled.', 'info');
+              return;
+            }
+            const backupAction = replaceChoice.trim().toUpperCase();
+            if (!['BACKUP', 'REPLACE'].includes(backupAction)) {
+              LS.toast('Type BACKUP or REPLACE.', 'warn');
+              return;
+            }
+            snapshotBefore = backupAction === 'BACKUP';
+          }
+          result = await sendImport(file, mode, snapshotBefore);
+        }
         LS.toast(`Imported "${result.project.title}".`, 'ok');
         location.href = `/project/${result.project.slug}`;
       } catch (err) {
         LS.toast(`Import failed: ${err.message}`, 'error', 10000);
+      } finally {
         importBtn.disabled = false;
         importBtn.textContent = 'Import project';
         importInput.value = '';
       }
     });
+  }
+
+  const openSnapshotsButton = document.getElementById('open-snapshots-folder-btn');
+  if (openSnapshotsButton) {
+    openSnapshotsButton.addEventListener('click', async () => {
+      try {
+        const result = await LS.post('/api/snapshots/open', {});
+        if (!result.opened) LS.toast('The snapshot folder could not be opened.', 'warn');
+      } catch (err) {
+        LS.toast(err.message, 'error');
+      }
+    });
+  }
+
+  async function sendImport(file, mode, snapshotBefore = false) {
+    const body = new FormData();
+    body.append('file', file);
+    body.append('mode', mode);
+    body.append('snapshot_before', String(snapshotBefore));
+    return LS.request('POST', '/api/projects/import', body);
   }
 })();

@@ -2,7 +2,7 @@
 
 This documents the classification/guardrail foundation of [R02, issue #3](https://github.com/Andrew-Copilot/localscribe/issues/3)
 and the local snapshot foundation of [R03, issue #4](https://github.com/Andrew-Copilot/localscribe/issues/4).
-No backup transport or backup UI is implemented.
+No Box backup transport or remote backup UI is implemented.
 
 ## Decision and revised roadmap
 
@@ -132,4 +132,4 @@ snapshots. Checksums provide corruption detection, not signatures, authenticity,
 PHI detection, institutional approval, or compliance. Future copying by the
 user's existing Box Sync client is a separate transport phase subject to the
 destination policy above; Phase 1 does not select or copy to a Box destination,
-implement Box APIs/OAuth/authentication, store credentials, or add backup UI.
+implement Box APIs/OAuth/authentication, store credentials, or add remote backup UI.
