@@ -73,6 +73,10 @@ class ProjectConflictError(ProjectError):
     """An operation needs an explicit choice because a project already exists."""
 
 
+class ProjectCancelled(ProjectError):
+    """An archive operation was cancelled by the user."""
+
+
 def _validate_sensitivity(value) -> str:
     try:
         return validate_sensitivity(value)
@@ -629,8 +633,18 @@ def list_outputs(slug: str, doc_id: str) -> list:
 # Import / export
 # ---------------------------------------------------------------------------
 
-def export_project(slug: str, dest_dir: Path | None = None, include_media: bool = True) -> Path:
+def export_project(
+    slug: str,
+    dest_dir: Path | None = None,
+    include_media: bool = True,
+    cancel_event=None,
+) -> Path:
     """Write a versioned, checksummed .lsproj archive of a project."""
+
+    def check_cancelled() -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ProjectCancelled("Backup cancelled.")
+
     record = load_project(slug)
     slug = record["slug"]
     root = project_dir(slug)
@@ -670,6 +684,7 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
     paths = []
     transient_directories = {"cache", "caches", "logs", "__pycache__"}
     for path in sorted(root.rglob("*")):
+        check_cancelled()
         if not path.is_file():
             continue
         relative = path.relative_to(root)
@@ -699,19 +714,27 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
             created = True
             with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
                 for path, archive_name in paths:
+                    check_cancelled()
                     if archive_name == PROJECT_FILE:
                         archive.writestr(
                             archive_name,
                             json.dumps(project_json, indent=2, ensure_ascii=False),
                         )
                     else:
-                        archive.write(path, archive_name)
+                        with path.open("rb") as source, archive.open(
+                            archive_name, "w"
+                        ) as target:
+                            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                                check_cancelled()
+                                target.write(chunk)
 
                 for info in archive.infolist():
+                    check_cancelled()
                     digest = hashlib.sha256()
                     size = 0
                     with archive.open(info) as source:
                         for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                            check_cancelled()
                             size += len(chunk)
                             digest.update(chunk)
                     manifest.setdefault("files", []).append({

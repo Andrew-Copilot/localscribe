@@ -26,7 +26,17 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import activity, catalog, exporters, media, proofread, projects, update_check, winlibs
+from . import (
+    activity,
+    box_sync,
+    catalog,
+    exporters,
+    media,
+    proofread,
+    projects,
+    update_check,
+    winlibs,
+)
 from .config import (
     APP_NAME,
     HOST,
@@ -222,6 +232,7 @@ async def page_project(request: Request, slug: str):
             stats=projects.project_stats(slug),
             snapshots=projects.list_snapshots(slug),
             activities=activity.recent(project.get("project_id") or project["slug"]),
+            box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
             accepted=sorted(media.MEDIA_EXTENSIONS),
         ),
     )
@@ -408,8 +419,16 @@ async def api_save_settings(request: Request):
     if changed:
         CONSOLE.info(
             f"Settings updated: {', '.join(sorted(changed))}",
-            **{k: v for k, v in changed.items() if not isinstance(v, (dict, list))},
+            **{
+                k: v for k, v in changed.items()
+                if k != "box_sync_destination" and not isinstance(v, (dict, list))
+            },
         )
+        if "box_sync_destination" in changed:
+            CONSOLE.info(
+                "Local Box Sync folder configuration updated.",
+                configured=bool(changed["box_sync_destination"]),
+            )
     if "offline_lock" in changed:
         CONSOLE.warn(
             "Offline lock engaged: outbound network access is now blocked."
@@ -826,6 +845,55 @@ async def api_cancel_all():
 # ---------------------------------------------------------------------------
 # Import / export
 # ---------------------------------------------------------------------------
+
+@app.post("/api/projects/{slug}/box-backup")
+async def api_start_box_backup(slug: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object.")
+    if not isinstance(payload.get("include_media", True), bool):
+        raise HTTPException(status_code=400, detail="'include_media' must be a boolean.")
+    try:
+        job = box_sync.BACKUPS.submit(
+            slug,
+            confirm_sync_destination=payload.get("confirm_sync_destination") is True,
+            independently_verified_box_health=(
+                payload.get("independently_verified_box_health") is True
+            ),
+            include_media=payload.get("include_media", True),
+        )
+    except box_sync.BackupError as exc:
+        status = 409 if "Offline Lock" in str(exc) else 400
+        if "Box Health" in str(exc):
+            status = 403
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    CONSOLE.info("Local Box Sync backup started.", slug=slug, job=job["job_id"])
+    return {"backup": job}
+
+
+@app.get("/api/projects/{slug}/box-backup")
+async def api_get_box_backup(slug: str, job_id: str | None = None):
+    try:
+        projects.load_project(slug)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    job = box_sync.BACKUPS.get(slug, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No recent backup job was found.")
+    return {"backup": job}
+
+
+@app.post("/api/projects/{slug}/box-backup/{job_id}/cancel")
+async def api_cancel_box_backup(slug: str, job_id: str):
+    if not box_sync.BACKUPS.cancel(slug, job_id):
+        raise HTTPException(status_code=409, detail="This backup is no longer cancellable.")
+    return {"cancel_requested": True}
+
 
 @app.get("/api/projects/{slug}/snapshots")
 async def api_list_snapshots(slug: str):

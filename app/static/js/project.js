@@ -434,6 +434,122 @@
     });
   }
 
+  const startBoxBackupBtn = document.getElementById('start-box-backup-btn');
+  const cancelBoxBackupBtn = document.getElementById('cancel-box-backup-btn');
+  const boxBackupStatus = document.getElementById('box-backup-status');
+  let boxBackupJobId = null;
+  let boxBackupPoll = null;
+  let boxBackupReported = null;
+
+  function showBoxBackup(job) {
+    if (!job || !boxBackupStatus) return;
+    const labels = {
+      queued: 'Waiting to start…',
+      running: job.stage === 'building_archive'
+        ? 'Building checksummed archive…'
+        : `Copying archive (${LS.bytes(job.bytes_copied)} of ${LS.bytes(job.total_bytes)})…`,
+      complete: `Backup verified: ${job.filename} (${LS.bytes(job.total_bytes)}).`,
+      failed: `Backup failed: ${job.error || 'Retry the operation.'}`,
+      cancelled: 'Backup cancelled. Any incomplete copy was removed.',
+    };
+    boxBackupStatus.textContent = labels[job.status] || 'Checking backup status…';
+    const active = job.status === 'queued' || job.status === 'running';
+    startBoxBackupBtn.disabled = active;
+    cancelBoxBackupBtn.hidden = !active;
+    if (job.status === 'complete' && job.verified
+        && boxBackupReported !== job.job_id) {
+      boxBackupReported = job.job_id;
+      LS.toast('Box Sync copy completed and checksum verification passed.', 'ok');
+    }
+    if (!active && boxBackupPoll) {
+      clearInterval(boxBackupPoll);
+      boxBackupPoll = null;
+    }
+  }
+
+  async function pollBoxBackup() {
+    if (!boxBackupJobId) return;
+    try {
+      const result = await LS.get(
+        `/api/projects/${encodeURIComponent(slug)}/box-backup` +
+        `?job_id=${encodeURIComponent(boxBackupJobId)}`
+      );
+      showBoxBackup(result.backup);
+    } catch (err) {
+      if (boxBackupStatus) boxBackupStatus.textContent = err.message;
+      if (boxBackupPoll) clearInterval(boxBackupPoll);
+      boxBackupPoll = null;
+    }
+  }
+
+  if (startBoxBackupBtn) {
+    startBoxBackupBtn.addEventListener('click', async () => {
+      const syncConfirmed =
+        document.getElementById('confirm-box-sync-destination').checked;
+      if (!syncConfirmed) {
+        LS.toast('Confirm your selected folder is managed by your Box Sync client.', 'warn');
+        return;
+      }
+      if (!confirm(
+        'Copy a checksummed archive of this project into the configured local ' +
+        'Box Sync folder? The Box Sync client may upload it according to your ' +
+        'institutional account and folder policy.'
+      )) return;
+
+      startBoxBackupBtn.disabled = true;
+      boxBackupStatus.textContent = 'Starting explicit backup…';
+      try {
+        const result = await LS.post(
+          `/api/projects/${encodeURIComponent(slug)}/box-backup`,
+          {
+            confirm_sync_destination: true,
+            independently_verified_box_health:
+              document.getElementById('confirm-box-health').checked,
+            include_media:
+              document.getElementById('box-backup-include-media').checked,
+          }
+        );
+        boxBackupJobId = result.backup.job_id;
+        showBoxBackup(result.backup);
+        if (!boxBackupPoll) boxBackupPoll = setInterval(pollBoxBackup, 700);
+      } catch (err) {
+        boxBackupStatus.textContent = err.message;
+        startBoxBackupBtn.disabled = false;
+      }
+    });
+  }
+
+  if (cancelBoxBackupBtn) {
+    cancelBoxBackupBtn.addEventListener('click', async () => {
+      if (!boxBackupJobId) return;
+      cancelBoxBackupBtn.disabled = true;
+      try {
+        await LS.post(
+          `/api/projects/${encodeURIComponent(slug)}/box-backup/` +
+          `${encodeURIComponent(boxBackupJobId)}/cancel`
+        );
+        boxBackupStatus.textContent = 'Cancellation requested…';
+      } catch (err) {
+        LS.toast(err.message, 'warn');
+      } finally {
+        cancelBoxBackupBtn.disabled = false;
+      }
+    });
+  }
+
+  if (startBoxBackupBtn) {
+    LS.get(`/api/projects/${encodeURIComponent(slug)}/box-backup`)
+      .then((result) => {
+        const job = result.backup;
+        boxBackupJobId = job.job_id;
+        showBoxBackup(job);
+        if (job.status === 'queued' || job.status === 'running') {
+          boxBackupPoll = setInterval(pollBoxBackup, 700);
+        }
+      })
+      .catch(() => {});
+  }
+
   const deleteBtn = document.getElementById('delete-project-btn');
   if (deleteBtn) {
     deleteBtn.addEventListener('click', async () => {

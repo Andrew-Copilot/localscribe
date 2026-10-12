@@ -73,6 +73,52 @@
   {% endif %}
 </div>
 
+<div class="card" id="box-backup-card">
+  <h2>Box Sync backup</h2>
+  <p class="small muted">
+    This explicitly copies a checksummed project archive into the local folder
+    you configure. Local Scribe cannot confirm that Box Sync is running or that
+    a destination is approved. Box Sync handles its own sign-in and network sync.
+  </p>
+  {% if box_sync_configured %}
+  <div class="field">
+    <label class="chk">
+      <input type="checkbox" id="confirm-box-sync-destination">
+      I selected this folder from my existing U of I Box Sync client.
+    </label>
+  </div>
+  <div class="field">
+    <label class="chk">
+      <input type="checkbox" id="confirm-box-health">
+      I independently verified that this destination is an approved Box Health
+      folder (required for PHI, potential PHI, or unknown data unless its root
+      name matches the documented heuristic).
+    </label>
+  </div>
+  <div class="field">
+    <label class="chk">
+      <input type="checkbox" id="box-backup-include-media" checked>
+      Include original source media
+    </label>
+  </div>
+  <div class="row">
+    <button type="button" class="btn btn-primary" id="start-box-backup-btn">
+      Back up to Box Sync
+    </button>
+    <button type="button" class="btn btn-quiet" id="cancel-box-backup-btn" hidden>
+      Cancel backup
+    </button>
+    <span id="box-backup-status" class="small muted" role="status" aria-live="polite"></span>
+  </div>
+  {% else %}
+  <p class="notice notice-info small">
+    No destination is configured. Set the path to a folder inside your existing
+    U of I Box Sync desktop folder in <a href="/settings">AI Settings</a>.
+    Local Scribe will not choose one for you.
+  </p>
+  {% endif %}
+</div>
+
 <!-- Project metadata: explicit save, unlike the transcript editor's autosave -->
 <form class="card" id="meta-form" hidden>
   <h2>Project details</h2>
