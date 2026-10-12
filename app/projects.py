@@ -580,6 +580,7 @@ def _import_archive(archive: zipfile.ZipFile, archive_path: Path, mode: str) -> 
         manifest = snapshots.read_manifest(archive)
         if manifest["format_version"] == snapshots.FORMAT_VERSION:
             snapshots.validate_snapshot(archive)
+        record = snapshots.read_project_metadata(archive)
     except snapshots.SnapshotError as exc:
         raise ProjectError(str(exc)) from exc
     incoming = slugify(manifest.get("slug") or manifest.get("title") or "imported")
@@ -613,13 +614,6 @@ def _import_archive(archive: zipfile.ZipFile, archive_path: Path, mode: str) -> 
             with archive.open(name) as src, open(destination, "wb") as dst:
                 shutil.copyfileobj(src, dst)
 
-        record = read_json(target / PROJECT_FILE)
-        if record is None:
-            shutil.rmtree(target, ignore_errors=True)
-            raise ProjectError(
-                "The archive did not contain a project.json, so it could not "
-                "be imported."
-            )
         record["slug"] = slug
         _normalize_project(record)
         if slug != incoming:

@@ -111,7 +111,12 @@ duplicates (including case collisions), special-file entries, declared files,
 byte sizes, and SHA-256. v2 rejects all unexpected archive members, including
 directory entries, instead of silently ignoring them. v1 may retain its directory
 entries and extras but must also pass archive path safety checks.
-v2 import validates the same open ZIP before replacement or extraction.
+v2 validation also requires `project.json` to decode to a JSON object: matching
+checksums alone do not make malformed project metadata importable. Both v1 and
+v2 imports read and validate that metadata from the same open ZIP before any
+replacement or extraction, so missing, malformed, or non-object project metadata
+cannot delete an existing project. Atomic restore/rollback for later filesystem
+failures remains a separate recovery phase.
 
 Creation streams artifacts and hashes the bytes actually written. Metadata is
 read once for both archived bytes and provenance. In-process project writes are

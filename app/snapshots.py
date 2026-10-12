@@ -109,6 +109,17 @@ def read_manifest(archive: zipfile.ZipFile) -> dict:
     return manifest
 
 
+def read_project_metadata(archive: zipfile.ZipFile) -> dict:
+    """Require usable project JSON before any import can replace local data."""
+    try:
+        record = _json(archive.read("project.json"))
+    except KeyError as exc:
+        raise SnapshotError("Snapshot project metadata is missing.") from exc
+    if not isinstance(record, dict):
+        raise SnapshotError("Snapshot project metadata must be a JSON object.")
+    return record
+
+
 def _validate(archive: zipfile.ZipFile) -> dict:
     manifest = read_manifest(archive)
     if manifest["format_version"] != FORMAT_VERSION:
@@ -176,6 +187,7 @@ def _validate(archive: zipfile.ZipFile) -> dict:
                 size += len(chunk)
         if size != item["size_bytes"] or digest.hexdigest() != item["sha256"]:
             raise SnapshotError("Snapshot artifact checksum does not match.")
+    read_project_metadata(archive)
     return manifest
 
 

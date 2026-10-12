@@ -259,6 +259,45 @@ def test_unsafe_archive_paths():
         check("nothing escaped extraction", not (root / "escape.txt").exists())
 
 
+def test_invalid_project_metadata_preserves_existing_project():
+    with fixture() as (root, slug, doc_id):
+        source = exported(root, slug)
+        project = projects.project_dir(slug)
+        before = {p.relative_to(project): p.read_bytes() for p in project.rglob("*") if p.is_file()}
+        for data in (b"not valid JSON", b"\xff", b"null", b"[]", b'"not an object"'):
+            def transform(name, content):
+                if name == "project.json":
+                    return data
+                if name == snapshots.MANIFEST_FILE:
+                    manifest = json.loads(content)
+                    for artifact in manifest["artifacts"]:
+                        if artifact["path"] == "project.json":
+                            artifact.update(size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+                    return json.dumps(manifest).encode()
+                return content
+
+            bad = rewrite(source, root / "invalid-project.lsproj", transform)
+            rejects("checksummed invalid project metadata rejected", lambda: snapshots.validate_snapshot(bad))
+            for mode in ("replace", "rename"):
+                rejects("invalid project rejected before import",
+                        lambda: projects.import_project(bad, mode=mode), projects.ProjectError)
+            after = {p.relative_to(project): p.read_bytes() for p in project.rglob("*") if p.is_file()}
+            check("all original project files preserved", before == after)
+            check("invalid metadata creates no renamed project", len(projects.list_projects()) == 1)
+        for data in (None, b"not valid JSON", b"\xff", b"null", b"[]"):
+            legacy = root / "invalid-legacy.lsproj"
+            with zipfile.ZipFile(legacy, "w") as archive:
+                archive.writestr(snapshots.MANIFEST_FILE, json.dumps({
+                    "format": "localscribe-project", "format_version": 1, "slug": slug,
+                }))
+                if data is not None:
+                    archive.writestr("project.json", data)
+            rejects("invalid legacy project rejected before replacement",
+                    lambda: projects.import_project(legacy, mode="replace"), projects.ProjectError)
+            after = {p.relative_to(project): p.read_bytes() for p in project.rglob("*") if p.is_file()}
+            check("invalid legacy archive preserves all original files", before == after)
+
+
 def test_atomic_failure_and_source_links():
     with fixture() as (root, slug, doc_id):
         existing = exported(root, slug)
@@ -340,6 +379,7 @@ def main():
     for test in (
         test_deterministic_full_and_transcript_only, test_exclusion_and_no_sensitive_logging,
         test_tampering_and_invalid_schema, test_unsafe_archive_paths,
+        test_invalid_project_metadata_preserves_existing_project,
         test_atomic_failure_and_source_links, test_legacy_v1_compatibility,
         test_archive_endpoints_do_not_log_sensitive_content,
     ):
