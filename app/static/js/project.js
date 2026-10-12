@@ -117,11 +117,18 @@
         const name = doc ? doc.filename : 'this file';
         if (!confirm(
           `Remove "${name}"?\n\nThis permanently deletes the media file, its ` +
-          `transcript, and every exported output for it. This cannot be undone.`
+          `transcript, and every exported output for it.`
         )) return;
+        const snapshot = confirm(
+          'Create a local recovery snapshot of the whole project first?\n\n' +
+          'Choose Cancel to continue without a snapshot.'
+        );
         button.disabled = true;
         try {
-          await LS.del(`/api/projects/${encodeURIComponent(slug)}/documents/${encodeURIComponent(id)}`);
+          await LS.del(
+            `/api/projects/${encodeURIComponent(slug)}/documents/` +
+            `${encodeURIComponent(id)}?snapshot=${snapshot}`
+          );
           documents = documents.filter((d) => d.id !== id);
           render();
           LS.toast(`Removed ${name}.`, 'info');
@@ -364,6 +371,185 @@
     });
   }
 
+  const snapshotIncludeMedia = document.getElementById('snapshot-include-media');
+  const createSnapshotBtn = document.getElementById('create-snapshot-btn');
+  if (createSnapshotBtn) {
+    createSnapshotBtn.addEventListener('click', async () => {
+      createSnapshotBtn.disabled = true;
+      try {
+        const result = await LS.post(
+          `/api/projects/${encodeURIComponent(slug)}/snapshots`,
+          { include_media: !snapshotIncludeMedia || snapshotIncludeMedia.checked }
+        );
+        LS.toast('Local recovery snapshot created.', 'ok');
+        const select = document.getElementById('snapshot-select');
+        if (select && result.snapshot) {
+          const option = document.createElement('option');
+          option.value = result.snapshot.snapshot_id;
+          option.textContent =
+            `${result.snapshot.created.slice(0, 19).replace('T', ' ')} · ` +
+            `${result.snapshot.size_bytes.toLocaleString()} bytes`;
+          select.prepend(option);
+          select.value = option.value;
+          document.getElementById('restore-snapshot-btn').disabled = false;
+        }
+        location.reload();
+      } catch (err) {
+        LS.toast(`Could not create a snapshot: ${err.message}`, 'error');
+      } finally {
+        createSnapshotBtn.disabled = false;
+      }
+    });
+  }
+
+  const restoreSnapshotBtn = document.getElementById('restore-snapshot-btn');
+  if (restoreSnapshotBtn) {
+    restoreSnapshotBtn.addEventListener('click', async () => {
+      const select = document.getElementById('snapshot-select');
+      const mode = document.getElementById('snapshot-restore-mode').value;
+      if (!select || !select.value || mode === 'abort') {
+        LS.toast('No restore was performed.', 'info');
+        return;
+      }
+      if (mode === 'replace' && !confirm(
+        'Replace this project with the selected snapshot? A safety snapshot of ' +
+        'the current project will be created first.'
+      )) return;
+      restoreSnapshotBtn.disabled = true;
+      try {
+        const result = await LS.post(
+          `/api/projects/${encodeURIComponent(slug)}/snapshots/` +
+          `${encodeURIComponent(select.value)}/restore`,
+          { mode }
+        );
+        if (result.aborted) {
+          LS.toast('Restore cancelled.', 'info');
+        } else {
+          location.href = `/project/${encodeURIComponent(result.project.slug)}`;
+        }
+      } catch (err) {
+        LS.toast(`Could not restore the snapshot: ${err.message}`, 'error', 10000);
+        restoreSnapshotBtn.disabled = false;
+      }
+    });
+  }
+
+  const startBoxBackupBtn = document.getElementById('start-box-backup-btn');
+  const cancelBoxBackupBtn = document.getElementById('cancel-box-backup-btn');
+  const boxBackupStatus = document.getElementById('box-backup-status');
+  let boxBackupJobId = null;
+  let boxBackupPoll = null;
+  let boxBackupReported = null;
+
+  function showBoxBackup(job) {
+    if (!job || !boxBackupStatus) return;
+    const labels = {
+      queued: 'Waiting to start…',
+      running: job.stage === 'building_archive'
+        ? 'Building checksummed archive…'
+        : `Copying archive (${LS.bytes(job.bytes_copied)} of ${LS.bytes(job.total_bytes)})…`,
+      complete: `Backup verified: ${job.filename} (${LS.bytes(job.total_bytes)}).`,
+      failed: `Backup failed: ${job.error || 'Retry the operation.'}`,
+      cancelled: 'Backup cancelled. Any incomplete copy was removed.',
+    };
+    boxBackupStatus.textContent = labels[job.status] || 'Checking backup status…';
+    const active = job.status === 'queued' || job.status === 'running';
+    startBoxBackupBtn.disabled = active;
+    cancelBoxBackupBtn.hidden = !active;
+    if (job.status === 'complete' && job.verified
+        && boxBackupReported !== job.job_id) {
+      boxBackupReported = job.job_id;
+      LS.toast('Box Sync copy completed and checksum verification passed.', 'ok');
+    }
+    if (!active && boxBackupPoll) {
+      clearInterval(boxBackupPoll);
+      boxBackupPoll = null;
+    }
+  }
+
+  async function pollBoxBackup() {
+    if (!boxBackupJobId) return;
+    try {
+      const result = await LS.get(
+        `/api/projects/${encodeURIComponent(slug)}/box-backup` +
+        `?job_id=${encodeURIComponent(boxBackupJobId)}`
+      );
+      showBoxBackup(result.backup);
+    } catch (err) {
+      if (boxBackupStatus) boxBackupStatus.textContent = err.message;
+      if (boxBackupPoll) clearInterval(boxBackupPoll);
+      boxBackupPoll = null;
+    }
+  }
+
+  if (startBoxBackupBtn) {
+    startBoxBackupBtn.addEventListener('click', async () => {
+      const syncConfirmed =
+        document.getElementById('confirm-box-sync-destination').checked;
+      if (!syncConfirmed) {
+        LS.toast('Confirm your selected folder is managed by your Box Sync client.', 'warn');
+        return;
+      }
+      if (!confirm(
+        'Copy a checksummed archive of this project into the configured local ' +
+        'Box Sync folder? The Box Sync client may upload it according to your ' +
+        'institutional account and folder policy.'
+      )) return;
+
+      startBoxBackupBtn.disabled = true;
+      boxBackupStatus.textContent = 'Starting explicit backup…';
+      try {
+        const result = await LS.post(
+          `/api/projects/${encodeURIComponent(slug)}/box-backup`,
+          {
+            confirm_sync_destination: true,
+            independently_verified_box_health:
+              document.getElementById('confirm-box-health').checked,
+            include_media:
+              document.getElementById('box-backup-include-media').checked,
+          }
+        );
+        boxBackupJobId = result.backup.job_id;
+        showBoxBackup(result.backup);
+        if (!boxBackupPoll) boxBackupPoll = setInterval(pollBoxBackup, 700);
+      } catch (err) {
+        boxBackupStatus.textContent = err.message;
+        startBoxBackupBtn.disabled = false;
+      }
+    });
+  }
+
+  if (cancelBoxBackupBtn) {
+    cancelBoxBackupBtn.addEventListener('click', async () => {
+      if (!boxBackupJobId) return;
+      cancelBoxBackupBtn.disabled = true;
+      try {
+        await LS.post(
+          `/api/projects/${encodeURIComponent(slug)}/box-backup/` +
+          `${encodeURIComponent(boxBackupJobId)}/cancel`
+        );
+        boxBackupStatus.textContent = 'Cancellation requested…';
+      } catch (err) {
+        LS.toast(err.message, 'warn');
+      } finally {
+        cancelBoxBackupBtn.disabled = false;
+      }
+    });
+  }
+
+  if (startBoxBackupBtn) {
+    LS.get(`/api/projects/${encodeURIComponent(slug)}/box-backup`)
+      .then((result) => {
+        const job = result.backup;
+        boxBackupJobId = job.job_id;
+        showBoxBackup(job);
+        if (job.status === 'queued' || job.status === 'running') {
+          boxBackupPoll = setInterval(pollBoxBackup, 700);
+        }
+      })
+      .catch(() => {});
+  }
+
   const deleteBtn = document.getElementById('delete-project-btn');
   if (deleteBtn) {
     deleteBtn.addEventListener('click', async () => {
@@ -371,12 +557,17 @@
       if (!confirm(
         `Delete this entire project?\n\nThis permanently removes ` +
         `${LS.plural(count, 'recording')}, all transcripts, and all exported ` +
-        `files. This cannot be undone.\n\nConsider exporting the project first.`
+        `files. Existing recovery snapshots are kept.`
       )) return;
-      if (!confirm('Last check: really delete everything in this project?')) return;
+      const snapshot = confirm(
+        'Create a local recovery snapshot of the whole project first?\n\n' +
+        'Choose Cancel to continue without a new snapshot.'
+      );
 
       try {
-        await LS.del(`/api/projects/${encodeURIComponent(slug)}`);
+        await LS.del(
+          `/api/projects/${encodeURIComponent(slug)}?snapshot=${snapshot}`
+        );
         location.href = '/';
       } catch (err) {
         LS.toast(err.message, 'error');

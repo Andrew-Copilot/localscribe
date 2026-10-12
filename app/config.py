@@ -413,6 +413,11 @@ SETTINGS_SCHEMA = [
             _f("autosave_revisions", "Autosave revisions to keep", "slider", 20,
                "Per-document edit history depth.",
                min=0, max=100, step=5),
+            _f("box_sync_destination", "Local Box Sync folder", "text", "",
+               "Optional path to a folder you selected inside your existing U of I "
+               "Box Sync desktop client. Local Scribe cannot verify that the folder "
+               "is synchronized or approved. No folder is selected automatically. "
+               "Offline Lock must be off before copying."),
         ],
     },
 ]

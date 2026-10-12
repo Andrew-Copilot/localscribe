@@ -19,13 +19,24 @@ import os
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
+from uuid import uuid4
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import catalog, exporters, media, proofread, projects, update_check, winlibs
+from . import (
+    activity,
+    box_sync,
+    catalog,
+    exporters,
+    media,
+    proofread,
+    projects,
+    update_check,
+    winlibs,
+)
 from .config import (
     APP_NAME,
     HOST,
@@ -196,7 +207,12 @@ async def page_index(request: Request):
     return templates.TemplateResponse(
         request,
         "index.html",
-        base_context(request, projects=projects.list_projects()),
+        base_context(
+            request,
+            projects=projects.list_projects(),
+            snapshots=projects.list_all_snapshots(),
+            activities=activity.recent(),
+        ),
     )
 
 
@@ -214,6 +230,9 @@ async def page_project(request: Request, slug: str):
             project=project,
             documents=projects.list_documents(slug),
             stats=projects.project_stats(slug),
+            snapshots=projects.list_snapshots(slug),
+            activities=activity.recent(project.get("project_id") or project["slug"]),
+            box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
             accepted=sorted(media.MEDIA_EXTENSIONS),
         ),
     )
@@ -400,8 +419,16 @@ async def api_save_settings(request: Request):
     if changed:
         CONSOLE.info(
             f"Settings updated: {', '.join(sorted(changed))}",
-            **{k: v for k, v in changed.items() if not isinstance(v, (dict, list))},
+            **{
+                k: v for k, v in changed.items()
+                if k != "box_sync_destination" and not isinstance(v, (dict, list))
+            },
         )
+        if "box_sync_destination" in changed:
+            CONSOLE.info(
+                "Local Box Sync folder configuration updated.",
+                configured=bool(changed["box_sync_destination"]),
+            )
     if "offline_lock" in changed:
         CONSOLE.warn(
             "Offline lock engaged: outbound network access is now blocked."
@@ -629,12 +656,24 @@ async def api_update_project(slug: str, request: Request):
 
 
 @app.delete("/api/projects/{slug}")
-async def api_delete_project(slug: str):
+async def api_delete_project(slug: str, snapshot: bool | None = None):
+    if snapshot is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose whether to create a recovery snapshot before deleting.",
+        )
     try:
         record = projects.load_project(slug)
+        if snapshot:
+            projects.create_snapshot(slug)
         projects.delete_project(slug)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(
+        "project_delete",
+        record.get("project_id") or record["slug"],
+        "deleted_with_snapshot" if snapshot else "deleted_without_snapshot",
+    )
     CONSOLE.warn(f"Deleted project '{record.get('title')}' and all its files.", slug=slug)
     return {"deleted": True}
 
@@ -700,12 +739,25 @@ async def api_upload(slug: str, files: list[UploadFile]):
 
 
 @app.delete("/api/projects/{slug}/documents/{doc_id}")
-async def api_delete_document(slug: str, doc_id: str):
+async def api_delete_document(slug: str, doc_id: str, snapshot: bool | None = None):
+    if snapshot is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose whether to create a recovery snapshot before deleting.",
+        )
     try:
+        project = projects.load_project(slug)
         record = projects.load_document(slug, doc_id)
+        if snapshot:
+            projects.create_snapshot(slug)
         projects.delete_document(slug, doc_id)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(
+        "document_delete",
+        project.get("project_id") or project["slug"],
+        "deleted_with_snapshot" if snapshot else "deleted_without_snapshot",
+    )
     CONSOLE.warn(f"Deleted {record.get('filename')} and its transcript.", document=doc_id)
     return {"deleted": True, "stats": projects.project_stats(slug)}
 
@@ -794,6 +846,121 @@ async def api_cancel_all():
 # Import / export
 # ---------------------------------------------------------------------------
 
+@app.post("/api/projects/{slug}/box-backup")
+async def api_start_box_backup(slug: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object.")
+    if not isinstance(payload.get("include_media", True), bool):
+        raise HTTPException(status_code=400, detail="'include_media' must be a boolean.")
+    try:
+        job = box_sync.BACKUPS.submit(
+            slug,
+            confirm_sync_destination=payload.get("confirm_sync_destination") is True,
+            independently_verified_box_health=(
+                payload.get("independently_verified_box_health") is True
+            ),
+            include_media=payload.get("include_media", True),
+        )
+    except box_sync.BackupError as exc:
+        status = 409 if "Offline Lock" in str(exc) else 400
+        if "Box Health" in str(exc):
+            status = 403
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    CONSOLE.info("Local Box Sync backup started.", slug=slug, job=job["job_id"])
+    return {"backup": job}
+
+
+@app.get("/api/projects/{slug}/box-backup")
+async def api_get_box_backup(slug: str, job_id: str | None = None):
+    try:
+        projects.load_project(slug)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    job = box_sync.BACKUPS.get(slug, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No recent backup job was found.")
+    return {"backup": job}
+
+
+@app.post("/api/projects/{slug}/box-backup/{job_id}/cancel")
+async def api_cancel_box_backup(slug: str, job_id: str):
+    if not box_sync.BACKUPS.cancel(slug, job_id):
+        raise HTTPException(status_code=409, detail="This backup is no longer cancellable.")
+    return {"cancel_requested": True}
+
+
+@app.get("/api/projects/{slug}/snapshots")
+async def api_list_snapshots(slug: str):
+    try:
+        return {"snapshots": projects.list_snapshots(slug)}
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/projects/{slug}/snapshots")
+async def api_create_snapshot(slug: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    include_media = payload.get("include_media", True) if isinstance(payload, dict) else True
+    if not isinstance(include_media, bool):
+        raise HTTPException(status_code=400, detail="'include_media' must be a boolean.")
+    try:
+        project = projects.load_project(slug)
+        snapshot = projects.create_snapshot(slug, include_media=include_media)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record("snapshot_create", project.get("project_id") or project["slug"])
+    CONSOLE.success("Created a local recovery snapshot.", slug=slug)
+    return {"snapshot": snapshot, "snapshots": projects.list_snapshots(slug)}
+
+
+@app.post("/api/projects/{slug}/snapshots/{snapshot_id}/restore")
+async def api_restore_snapshot(slug: str, snapshot_id: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    mode = payload.get("mode", "abort") if isinstance(payload, dict) else "abort"
+    try:
+        restored = projects.restore_snapshot(slug, snapshot_id, mode=mode)
+        if restored is None:
+            activity.record("snapshot_restore", slug, "aborted")
+            return {"aborted": True}
+    except projects.ProjectConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except projects.ProjectValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(
+        "snapshot_restore",
+        restored.get("project_id") or restored["slug"],
+        f"restored_{mode}",
+    )
+    CONSOLE.success("Restored a local recovery snapshot.", slug=restored["slug"])
+    return {"project": restored}
+
+
+@app.post("/api/snapshots/{slug}/{snapshot_id}/restore")
+async def api_restore_deleted_project_snapshot(
+    slug: str, snapshot_id: str, request: Request
+):
+    return await api_restore_snapshot(slug, snapshot_id, request)
+
+
+@app.get("/api/activity")
+async def api_activity(project_id: str | None = None, limit: int = 50):
+    return {"events": activity.recent(project_id=project_id, limit=limit)}
+
+
 @app.get("/api/projects/{slug}/export")
 async def api_export_project(slug: str, include_media: bool = True):
     try:
@@ -811,17 +978,51 @@ async def api_export_project(slug: str, include_media: bool = True):
 
 
 @app.post("/api/projects/import")
-async def api_import_project(file: UploadFile, mode: str = Form("rename")):
+async def api_import_project(
+    file: UploadFile,
+    mode: str = Form("rename"),
+    snapshot_before_replace: str | None = Form(None),
+):
     name = file.filename or "archive"
-    staging = PATHS.logs / f"import-{os.getpid()}-{name}"
+    staging = PATHS.logs / f"import-{os.getpid()}-{uuid4().hex}.lsproj"
     try:
+        staging.parent.mkdir(parents=True, exist_ok=True)
         staging.write_bytes(await file.read())
+        if mode == "replace" and snapshot_before_replace not in ("yes", "no"):
+            raise HTTPException(
+                status_code=400,
+                detail="Choose whether to create a recovery snapshot before replacing.",
+            )
+        if mode == "replace":
+            manifest = projects.inspect_archive(staging)
+            incoming_slug = projects.slugify(
+                manifest.get("slug") or manifest.get("title") or "imported"
+            )
+            if (
+                snapshot_before_replace == "yes"
+                and projects.project_dir(incoming_slug).exists()
+            ):
+                existing = projects.load_project(incoming_slug)
+                projects.create_snapshot(incoming_slug)
+                activity.record(
+                    "import_replace_snapshot",
+                    existing.get("project_id") or existing["slug"],
+                )
         record = projects.import_project(staging, mode=mode)
+    except HTTPException:
+        raise
     except projects.ProjectError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        status = 409 if isinstance(exc, projects.ProjectConflictError) else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
     finally:
         staging.unlink(missing_ok=True)
 
+    if mode == "replace":
+        activity.record(
+            "import_replace",
+            record.get("project_id") or record["slug"],
+            f"replaced_{snapshot_before_replace}",
+        )
     CONSOLE.success(
         f"Imported project '{record['title']}' with "
         f"{record['stats']['documents']} document(s)",

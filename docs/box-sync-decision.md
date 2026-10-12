@@ -1,7 +1,8 @@
 # Decision: local sensitivity guardrails and future Box Sync transport
 
-This implements the classification/guardrail foundation of [R02, issue #3](https://github.com/Andrew-Copilot/localscribe/issues/3)
-only. No backup transport or backup UI is implemented.
+This records the classification/guardrail foundation of [R02, issue #3](https://github.com/Andrew-Copilot/localscribe/issues/3)
+and the local-folder copy behavior for [R05, issue #6](https://github.com/Andrew-Copilot/localscribe/issues/6).
+Local recovery snapshots are a separate R04 feature.
 
 ## Decision and revised roadmap
 
@@ -15,11 +16,12 @@ only. No backup transport or backup UI is implemented.
   Missing or unrecognized stored values normalize conservatively in memory;
   the next project write persists that value. Reading/listing at startup does
   not rewrite existing projects. Incoming invalid declarations are rejected.
-- **R05 — Future Box Sync folder backup transport.** Use the researcher's
-  existing U of I Box Sync desktop folder, preferred when configured and
-  available. Do not build Box API verification, OAuth, or Box app registration.
-  Authentication (including institutional Entra/SSO) belongs to the Box Sync
-  client; Local Scribe must not handle credentials or tokens.
+- **R05 — Opt-in local Box Sync copy.** The researcher configures a folder
+  within their existing U of I Box Sync client and confirms that choice for
+  each explicit project backup. Local Scribe copies a verified `.lsproj`
+  archive; it does not use Box APIs, OAuth, or app registration. Authentication
+  (including institutional Entra/SSO) belongs to the Box Sync client; Local
+  Scribe does not handle credentials or tokens.
 
 These revised entries supersede earlier roadmap wording requiring Box APIs,
 OAuth/application registration, or institutional approval before implementing
@@ -50,7 +52,35 @@ must not exclude these artifacts or imply that derived data is automatically saf
 
 ## Out of scope
 
-Remote backups, local snapshots, Box Sync directory copying, Box APIs,
-authentication/credential storage, retention, deletion, remote versioning, and
-Box application registration are not part of this slice. Transcription behavior
-is unchanged. Tests use synthetic records only.
+## R05 local-copy behavior and limitations
+
+The destination is an optional absolute local folder path configured in AI
+Settings. No folder is selected automatically. Before each copy, the user must
+confirm that the selected folder belongs to their existing Box Sync client.
+Local Scribe does not check Box Sync installation, synchronization state,
+institutional ownership, or approval; Box Sync handles its own authentication
+and any later network upload. Local Scribe never calls a Box service.
+
+Each backup is an explicit action. It creates a versioned, checksummed project
+archive, copies it to the configured folder through a temporary partial file,
+and verifies the copied size and SHA-256 before publishing the final archive.
+The user can cancel while the archive is being built or copied. Failed,
+interrupted, or cancelled copies do not publish a final archive and may be
+retried. Source media may be included or omitted.
+
+PHI/potential-PHI and unknown projects require the existing Box Health
+root-name heuristic or a fresh explicit researcher confirmation that they
+independently verified this destination as approved Box Health. A stored
+attestation does not authorize a later backup. `no_phi` does not require Box
+Health. Offline Lock blocks local copies into Box Sync folders because the
+separate Box client may upload them. Activity history records outcomes using a
+hashed project reference and does not store folder paths, titles, filenames,
+credentials, or transcript content.
+
+This is not an institutional approval or compliance claim. Local folder copies
+do not replace separate disaster-recovery storage. Remote backup services, Box
+APIs, authentication/credential storage, retention, deletion, remote
+versioning, and Box application registration remain out of scope.
+Transcription behavior is unchanged. Automated tests use synthetic records
+only. Manual end-to-end recovery UI testing is pending and deferred for the
+project owner to perform later.

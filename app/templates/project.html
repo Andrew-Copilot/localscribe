@@ -23,6 +23,102 @@
   </div>
 </div>
 
+<div class="card" id="recovery-card">
+  <div class="row">
+    <h2>Recovery snapshots</h2>
+    <span class="spacer"></span>
+    <label class="chk">
+      <input type="checkbox" id="snapshot-include-media" checked>
+      Include source media
+    </label>
+    <button type="button" class="btn btn-small" id="create-snapshot-btn">Create snapshot</button>
+  </div>
+  <p class="small muted">
+    Snapshots are stored locally outside this project folder. Keep a separate
+    copy if you need protection from disk failure.
+  </p>
+  <div class="field-row">
+    <div class="field">
+      <label for="snapshot-select">Available snapshots</label>
+      <select id="snapshot-select">
+        {% for snapshot in snapshots %}
+        <option value="{{ snapshot.snapshot_id }}">
+          {{ snapshot.created[:19].replace('T', ' ') }} · {{ '{:,}'.format(snapshot.size_bytes) }} bytes
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="snapshot-restore-mode">If this project already exists</label>
+      <select id="snapshot-restore-mode">
+        <option value="abort">Abort (default)</option>
+        <option value="rename">Restore as a separate project</option>
+        <option value="replace">Replace this project (create safety snapshot)</option>
+      </select>
+    </div>
+    <div class="field" style="align-self:end">
+      <button type="button" class="btn" id="restore-snapshot-btn"
+        {% if not snapshots %}disabled{% endif %}>Restore selected snapshot</button>
+    </div>
+  </div>
+  <h3>Recent recovery activity</h3>
+  {% if activities %}
+  <ul class="small">
+    {% for event in activities|reverse %}
+    <li>{{ event.timestamp[:19].replace('T', ' ') }} · {{ event.action.replace('_', ' ') }} · {{ event.outcome.replace('_', ' ') }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="small muted">No recovery actions recorded for this project.</p>
+  {% endif %}
+</div>
+
+<div class="card" id="box-backup-card">
+  <h2>Box Sync backup</h2>
+  <p class="small muted">
+    This explicitly copies a checksummed project archive into the local folder
+    you configure. Local Scribe cannot confirm that Box Sync is running or that
+    a destination is approved. Box Sync handles its own sign-in and network sync.
+  </p>
+  {% if box_sync_configured %}
+  <div class="field">
+    <label class="chk">
+      <input type="checkbox" id="confirm-box-sync-destination">
+      I selected this folder from my existing U of I Box Sync client.
+    </label>
+  </div>
+  <div class="field">
+    <label class="chk">
+      <input type="checkbox" id="confirm-box-health">
+      I independently verified that this destination is an approved Box Health
+      folder (required for PHI, potential PHI, or unknown data unless its root
+      name matches the documented heuristic).
+    </label>
+  </div>
+  <div class="field">
+    <label class="chk">
+      <input type="checkbox" id="box-backup-include-media" checked>
+      Include original source media
+    </label>
+  </div>
+  <div class="row">
+    <button type="button" class="btn btn-primary" id="start-box-backup-btn">
+      Back up to Box Sync
+    </button>
+    <button type="button" class="btn btn-quiet" id="cancel-box-backup-btn" hidden>
+      Cancel backup
+    </button>
+    <span id="box-backup-status" class="small muted" role="status" aria-live="polite"></span>
+  </div>
+  {% else %}
+  <p class="notice notice-info small">
+    No destination is configured. Set the path to a folder inside your existing
+    U of I Box Sync desktop folder in <a href="/settings">AI Settings</a>.
+    Local Scribe will not choose one for you.
+  </p>
+  {% endif %}
+</div>
+
 <!-- Project metadata: explicit save, unlike the transcript editor's autosave -->
 <form class="card" id="meta-form" hidden>
   <h2>Project details</h2>
@@ -144,6 +240,7 @@
 <script>
   window.PROJECT = {
     slug: {{ project.slug|tojson }},
+    projectId: {{ (project.project_id or project.slug)|tojson }},
     documents: {{ documents|tojson }},
     stats: {{ stats|tojson }},
   };

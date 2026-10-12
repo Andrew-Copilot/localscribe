@@ -288,6 +288,8 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_assets        # front-end asset guards
 .venv/Scripts/python.exe -m tests.test_sensitivity   # project declarations and future backup policy
 .venv/Scripts/python.exe -m tests.test_project_archives # archive integrity and legacy compatibility
+.venv/Scripts/python.exe -m tests.test_recovery       # local snapshots and recovery safeguards
+.venv/Scripts/python.exe -m tests.test_box_sync       # local Box Sync copy safeguards
 .venv/Scripts/python.exe -m tests.test_speakers       # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts
 .venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery
@@ -300,7 +302,25 @@ Projects have a user-declared source-media sensitivity, defaulting to
 **Unknown — treat as PHI**. This controls future backup safeguards, not whether
 data is PHI, and provides no compliance advice. See the
 [Box Sync decision and local guardrails](docs/box-sync-decision.md).
-This foundation does not implement backup.
+
+Recovery snapshots use the verified `.lsproj` archive format and are stored
+locally under `projects/.snapshots/`, outside each project folder. You can
+include or omit source media when creating a snapshot. Deleting projects or
+recordings offers the option to snapshot first; replacing a project during
+restore creates a safety snapshot. Snapshots remain on the same computer and
+are not protection from drive loss, so copy important snapshots to a separate
+approved location. The app keeps a bounded local history of recovery actions.
+
+Manual end-to-end testing of the recovery UI has not yet been performed; it is
+deferred for the project owner to do later. The automated recovery tests do not
+verify desktop UI behavior or an installed Box Sync client.
+
+Optional Box Sync backup copies an archive into a folder you explicitly
+configure in AI Settings and confirm on each project backup. Local Scribe does
+not select a folder automatically, authenticate with Box, or verify that Box
+Sync is running. Offline Lock blocks the copy. See the
+[Box Sync decision and backup notes](docs/box-sync-decision.md) for policy and
+limitations.
 
 ## Versioning
 

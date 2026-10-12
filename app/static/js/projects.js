@@ -60,7 +60,28 @@
 
       const body = new FormData();
       body.append('file', file);
-      body.append('mode', 'rename');
+      const replace = confirm(
+        'If a project with this archive’s name already exists, replace it?\n\n' +
+        'Choose Cancel to keep both projects by importing a renamed copy.'
+      );
+      const mode = replace ? 'replace' : 'rename';
+      let snapshotBeforeReplace = null;
+      if (replace) {
+        snapshotBeforeReplace = confirm(
+          'Create a local recovery snapshot before replacing an existing project?\n\n' +
+          'Choose Cancel to skip the snapshot.'
+        ) ? 'yes' : 'no';
+        if (snapshotBeforeReplace === 'no' && !confirm(
+          'Replace an existing project without a recovery snapshot?'
+        )) {
+          importInput.value = '';
+          return;
+        }
+      }
+      body.append('mode', mode);
+      if (snapshotBeforeReplace) {
+        body.append('snapshot_before_replace', snapshotBeforeReplace);
+      }
 
       importBtn.disabled = true;
       importBtn.textContent = 'Importing...';
@@ -81,6 +102,40 @@
         importBtn.disabled = false;
         importBtn.textContent = 'Import project';
         importInput.value = '';
+      }
+    });
+  }
+
+  const restoreBtn = document.getElementById('restore-library-snapshot-btn');
+  if (restoreBtn) {
+    restoreBtn.addEventListener('click', async () => {
+      const select = document.getElementById('recovery-snapshot-select');
+      const option = select && select.selectedOptions[0];
+      const mode = document.getElementById('recovery-restore-mode').value;
+      if (!option || mode === 'abort') {
+        LS.toast('No restore was performed.', 'info');
+        return;
+      }
+      if (mode === 'replace' && !confirm(
+        'Replace the existing project with this snapshot? A safety snapshot ' +
+        'will be created first.'
+      )) return;
+
+      restoreBtn.disabled = true;
+      try {
+        const result = await LS.post(
+          `/api/snapshots/${encodeURIComponent(option.dataset.slug)}/` +
+          `${encodeURIComponent(option.value)}/restore`,
+          { mode }
+        );
+        if (result.aborted) {
+          LS.toast('Restore cancelled.', 'info');
+        } else {
+          location.href = `/project/${encodeURIComponent(result.project.slug)}`;
+        }
+      } catch (err) {
+        LS.toast(`Could not restore the snapshot: ${err.message}`, 'error', 10000);
+        restoreBtn.disabled = false;
       }
     });
   }

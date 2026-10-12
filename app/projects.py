@@ -69,6 +69,14 @@ class ProjectValidationError(ProjectError):
     """Incoming project metadata is invalid."""
 
 
+class ProjectConflictError(ProjectError):
+    """An operation needs an explicit choice because a project already exists."""
+
+
+class ProjectCancelled(ProjectError):
+    """An archive operation was cancelled by the user."""
+
+
 def _validate_sensitivity(value) -> str:
     try:
         return validate_sensitivity(value)
@@ -427,6 +435,99 @@ def delete_document(slug: str, doc_id: str) -> None:
         touch_project(slug)
 
 
+def _snapshot_dir(slug: str) -> Path:
+    clean = slugify(slug)
+    if not clean:
+        raise ProjectError("Invalid project identifier.")
+    return PATHS.projects / ".snapshots" / clean
+
+
+def create_snapshot(
+    slug: str, *, include_media: bool = True
+) -> dict:
+    """Save a verified project archive outside the project directory."""
+    record = load_project(slug)
+    slug = record["slug"]
+    snapshot_dir = _snapshot_dir(slug)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    staging = snapshot_dir / f".tmp-{uuid4().hex}"
+    staging.mkdir()
+    try:
+        with _LOCK:
+            archive = export_project(slug, staging, include_media=include_media)
+            snapshot_id = f"{slug}-{_stamp()}-{uuid4().hex[:8]}{EXPORT_SUFFIX}"
+            target = snapshot_dir / snapshot_id
+            archive.replace(target)
+        return {
+            "snapshot_id": snapshot_id,
+            "created": _now(),
+            "size_bytes": target.stat().st_size,
+            "includes_media": bool(include_media),
+        }
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def list_snapshots(slug: str) -> list[dict]:
+    snapshot_dir = _snapshot_dir(slug)
+    if not snapshot_dir.is_dir():
+        return []
+    snapshots = []
+    for path in snapshot_dir.iterdir():
+        if path.suffix != EXPORT_SUFFIX or not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        snapshots.append({
+            "snapshot_id": path.name,
+            "created": datetime.fromtimestamp(stat.st_mtime, timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "size_bytes": stat.st_size,
+        })
+    return sorted(snapshots, key=lambda item: item["created"], reverse=True)
+
+
+def list_all_snapshots() -> list[dict]:
+    root = PATHS.projects / ".snapshots"
+    if not root.is_dir():
+        return []
+    snapshots = []
+    for project_dir in root.iterdir():
+        if not project_dir.is_dir():
+            continue
+        for snapshot in list_snapshots(project_dir.name):
+            snapshot["project_slug"] = project_dir.name
+            snapshots.append(snapshot)
+    return sorted(snapshots, key=lambda item: item["created"], reverse=True)
+
+
+def restore_snapshot(slug: str, snapshot_id: str, mode: str = "abort") -> dict | None:
+    """Restore a saved archive after validating its identity and integrity."""
+    snapshot_dir = _snapshot_dir(slug).resolve()
+    candidate = Path(str(snapshot_id))
+    if (
+        candidate.name != str(snapshot_id)
+        or candidate.suffix != EXPORT_SUFFIX
+        or candidate.name in ("", ".", "..")
+    ):
+        raise ProjectValidationError("Invalid snapshot identifier.")
+    archive = (snapshot_dir / candidate.name).resolve()
+    if archive.parent != snapshot_dir or not archive.is_file():
+        raise ProjectError("That recovery snapshot was not found.")
+    if mode not in ("rename", "replace", "abort"):
+        raise ProjectValidationError("Restore mode must be 'rename', 'replace', or 'abort'.")
+    if mode == "abort":
+        return None
+
+    manifest = inspect_archive(archive)
+    incoming_slug = slugify(manifest.get("slug") or manifest.get("title") or "imported")
+    target = project_dir(incoming_slug)
+    if mode == "replace" and target.exists():
+        create_snapshot(incoming_slug)
+    return import_project(archive, mode=mode)
+
+
 def touch_project(slug: str) -> None:
     root = project_dir(slug)
     record = read_json(root / PROJECT_FILE)
@@ -532,8 +633,18 @@ def list_outputs(slug: str, doc_id: str) -> list:
 # Import / export
 # ---------------------------------------------------------------------------
 
-def export_project(slug: str, dest_dir: Path | None = None, include_media: bool = True) -> Path:
+def export_project(
+    slug: str,
+    dest_dir: Path | None = None,
+    include_media: bool = True,
+    cancel_event=None,
+) -> Path:
     """Write a versioned, checksummed .lsproj archive of a project."""
+
+    def check_cancelled() -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ProjectCancelled("Backup cancelled.")
+
     record = load_project(slug)
     slug = record["slug"]
     root = project_dir(slug)
@@ -573,6 +684,7 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
     paths = []
     transient_directories = {"cache", "caches", "logs", "__pycache__"}
     for path in sorted(root.rglob("*")):
+        check_cancelled()
         if not path.is_file():
             continue
         relative = path.relative_to(root)
@@ -602,19 +714,27 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
             created = True
             with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
                 for path, archive_name in paths:
+                    check_cancelled()
                     if archive_name == PROJECT_FILE:
                         archive.writestr(
                             archive_name,
                             json.dumps(project_json, indent=2, ensure_ascii=False),
                         )
                     else:
-                        archive.write(path, archive_name)
+                        info = zipfile.ZipInfo.from_file(path, archive_name)
+                        info.compress_type = archive.compression
+                        with path.open("rb") as source, archive.open(info, "w") as target:
+                            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                                check_cancelled()
+                                target.write(chunk)
 
                 for info in archive.infolist():
+                    check_cancelled()
                     digest = hashlib.sha256()
                     size = 0
                     with archive.open(info) as source:
                         for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                            check_cancelled()
                             size += len(chunk)
                             digest.update(chunk)
                     manifest.setdefault("files", []).append({
@@ -729,8 +849,8 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
 
     ``mode`` is 'rename' (default, keeps both copies) or 'replace'.
     """
-    if mode not in ("rename", "replace"):
-        raise ProjectValidationError("Import mode must be 'rename' or 'replace'.")
+    if mode not in ("rename", "replace", "abort"):
+        raise ProjectValidationError("Import mode must be 'rename', 'replace', or 'abort'.")
 
     PATHS.projects.mkdir(parents=True, exist_ok=True)
     stage = PATHS.projects / f".import-{uuid4().hex}"
@@ -742,6 +862,10 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
             with _LOCK:
                 slug = incoming
                 existing = (PATHS.projects / slug).exists()
+                if existing and mode == "abort":
+                    raise ProjectConflictError(
+                        "A project with this name already exists; choose rename or replace."
+                    )
                 if existing and mode == "rename":
                     counter = 2
                     while (PATHS.projects / f"{incoming}-{counter}").exists():
