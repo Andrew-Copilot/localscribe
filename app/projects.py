@@ -195,6 +195,14 @@ def new_project_record(title: str, **fields) -> dict:
         if key == "data_sensitivity" and key in fields:
             record[key] = _validate_sensitivity(fields[key])
             continue
+        if key == "operation" and key in fields:
+            operation = fields[key]
+            if operation not in ("transcribe", "translate"):
+                raise ProjectValidationError(
+                    "Operation must be transcribe or translate."
+                )
+            record[key] = operation
+            continue
         if key in fields and fields[key] is not None:
             record[key] = fields[key]
     return record

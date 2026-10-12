@@ -7,8 +7,10 @@ import tempfile
 from pathlib import Path
 from types import ModuleType
 
-from app import folder_picker, projects
+from app import engine, folder_picker, projects
+from app.config import default_settings
 from app.jobs import JobQueue
+from unittest.mock import patch
 
 FAILURES: list[str] = []
 
@@ -31,6 +33,19 @@ def test_project_operation_and_queued_task():
     )
     check("projects preserve the selected operation", project["operation"] == "translate")
     check("translation is carried into the queued job", job.payload["operation"] == "translate")
+    with patch.object(engine, "SETTINGS", type("Settings", (), {
+        "all": staticmethod(default_settings),
+    })()):
+        params = engine.ENGINE.transcribe_params({"task": job.payload["operation"]})
+    check("queued translation selects Whisper's translate task",
+          params["task"] == "translate")
+    try:
+        projects.new_project_record("Study", operation="unsupported")
+    except projects.ProjectValidationError:
+        invalid_rejected = True
+    else:
+        invalid_rejected = False
+    check("invalid project operations are rejected", invalid_rejected)
 
 
 def test_native_picker_result_and_cancel():
