@@ -318,6 +318,12 @@
         maintainer can build it by running
         <code>assets/dictionary/build_dictionary.py</code>.
       </div>
+      {% elif not proofreading.language_supported %}
+      <div class="notice small" style="margin-bottom:.7rem">
+        Proofreading is currently supported for English transcripts only.
+        Other languages remain available for Whisper transcription, but spelling
+        and transcription-artefact checks are disabled to avoid misleading flags.
+      </div>
       {% endif %}
 
       <div class="segments" id="segments"></div>

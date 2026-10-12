@@ -297,7 +297,9 @@ SETTINGS_SCHEMA = [
             _f("language", "Language", "text", "auto",
                "ISO code such as 'en', 'es' or 'zh', or 'auto' to detect from "
                "the first 30 seconds. Forcing the correct code is more reliable "
-               "than detection on recordings that open with noise or music."),
+               "than detection on recordings that open with noise or music. "
+               "Whisper model language support is broader than Local Scribe's "
+               "validated coverage; bundled proofreading currently supports English only."),
             _f("task", "Task", "select", "transcribe",
                "'transcribe' keeps the spoken language. 'translate' renders "
                "English output from non-English speech.",
