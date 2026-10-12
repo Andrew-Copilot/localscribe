@@ -228,7 +228,11 @@ settings.json        your settings
 
 A project is plain files, so you can inspect it, copy it to an encrypted
 drive, or recover a transcript with a text editor. **Export project** writes a
-single `.lsproj` archive; **Import project** reads one back.
+single versioned `.lsproj` archive with per-file SHA-256 checksums; **Import
+project** verifies those checksums before restoring. You can export with or
+without source media. Transient caches and logs are excluded. Older archives
+remain importable, but their contents cannot be checksum-verified; Local Scribe
+warns when one is imported.
 
 ## Options
 
@@ -283,7 +287,8 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_exporters     # captions and exports
 .venv/Scripts/python.exe -m tests.test_assets        # front-end asset guards
 .venv/Scripts/python.exe -m tests.test_sensitivity   # project declarations and future backup policy
-.venv/Scripts/python.exe -m tests.test_speakers      # roster and speaking turns
+.venv/Scripts/python.exe -m tests.test_project_archives # archive integrity and legacy compatibility
+.venv/Scripts/python.exe -m tests.test_speakers       # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts
 .venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery
 .venv/Scripts/python.exe -m tests.test_engine_fallback  # GPU-to-CPU fallback
