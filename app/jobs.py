@@ -80,6 +80,7 @@ class Job:
             "elapsed": round(self.elapsed, 1),
             "project": self.payload.get("slug"),
             "document": self.payload.get("doc_id"),
+            "operation": self.payload.get("operation"),
             "cancel_requested": self.cancel_requested,
         }
 
@@ -133,8 +134,12 @@ class JobQueue:
         )
         return job
 
-    def submit_transcription(self, slug: str, doc_id: str, label: str) -> Job:
-        return self.submit(Job("transcribe", label, slug=slug, doc_id=doc_id))
+    def submit_transcription(
+        self, slug: str, doc_id: str, label: str, operation: str = "transcribe"
+    ) -> Job:
+        return self.submit(
+            Job("transcribe", label, slug=slug, doc_id=doc_id, operation=operation)
+        )
 
     def submit_download(self, model_key: str) -> Job:
         spec = catalog.model_spec(model_key)
@@ -283,6 +288,7 @@ class JobQueue:
     def _do_transcription(self, job: Job) -> None:
         slug = job.payload["slug"]
         doc_id = job.payload["doc_id"]
+        operation = job.payload.get("operation") or "transcribe"
         settings = SETTINGS.all()
 
         project = projects.load_project(slug)
@@ -290,7 +296,8 @@ class JobQueue:
         source = projects.media_file(slug, doc_id)
 
         CONSOLE.step(
-            f"=== Transcribing {record['filename']} ===",
+            f"=== {'Translating to English' if operation == 'translate' else 'Transcribing'} "
+            f"{record['filename']} ===",
             job=job.id, project=project.get("title"), file=record["filename"],
             size=fmt_bytes(record.get("size_bytes")),
         )
@@ -394,6 +401,7 @@ class JobQueue:
         glossary = (project.get("glossary") or "").strip()
         profile = vocabulary.get_profile(project.get("vocabulary_profile_id"))
         overrides = vocabulary.transcription_overrides(settings, glossary, profile)
+        overrides["task"] = operation
         if glossary and not (settings.get("initial_prompt") or "").strip():
             CONSOLE.info(
                 "Using the project glossary as the initial prompt to improve "
@@ -420,7 +428,8 @@ class JobQueue:
             job.progress = 0.12 + 0.83 * snapshot["progress"]
             job.stats = snapshot
             job.detail = (
-                f"Transcribing {int(snapshot['progress'] * 100)}% - "
+                f"{'Translating' if operation == 'translate' else 'Transcribing'} "
+                f"{int(snapshot['progress'] * 100)}% - "
                 f"{snapshot['eta_text']} remaining"
             )
 
@@ -458,10 +467,13 @@ class JobQueue:
         doc = new_document(
             duration=duration,
             model=result["stats"].get("model") or str(settings.get("model")),
-            language=result["language"],
+            language="en" if operation == "translate" else result["language"],
             language_probability=result["language_probability"],
             engine=result["params"],
         )
+        doc["operation"] = operation
+        if operation == "translate":
+            doc["spoken_language"] = result["language"]
         # The decoder needs the vocabulary, but project exports should not expose
         # it through engine-parameter provenance unless the transcript itself does.
         doc["engine"] = vocabulary.redact_engine_params(doc.get("engine") or {})
@@ -500,12 +512,14 @@ class JobQueue:
             slug, doc_id,
             engine=dict(doc.get("engine") or {}),
             provenance=dict(doc.get("provenance") or {}),
+            operation=operation,
         )
 
         info_summary = summary(doc)
         stats = result["stats"]
+        operation_name = "Translation" if operation == "translate" else "Transcription"
         CONSOLE.success(
-            f"Transcription complete: {info_summary['words']} words in "
+            f"{operation_name} complete: {info_summary['words']} words in "
             f"{info_summary['segments']} segments, "
             f"{fmt_duration(stats['wall_seconds'])} of processing for "
             f"{fmt_duration(duration)} of audio "
@@ -514,7 +528,7 @@ class JobQueue:
         )
         if info_summary["low_confidence"]:
             CONSOLE.info(
-                f"{info_summary['low_confidence']} words were transcribed with "
+                f"{info_summary['low_confidence']} words were generated with "
                 "low confidence and are highlighted in the editor for review.",
                 low_confidence=info_summary["low_confidence"],
             )
@@ -530,7 +544,11 @@ class JobQueue:
             slug, doc_id, "transcribed",
             f"{info_summary['words']} words, ready for review",
         )
-        CONSOLE.success(f"=== {record['filename']} done ===", job=job.id)
+        CONSOLE.success(
+            f"=== {record['filename']} "
+            f"{'translation' if operation == 'translate' else 'transcription'} done ===",
+            job=job.id,
+        )
 
     def _export(self, slug: str, doc_id: str, doc: dict, project: dict, record: dict) -> dict:
         settings = SETTINGS.all()

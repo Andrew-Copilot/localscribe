@@ -255,7 +255,15 @@
       <div class="field" data-key="{{ field.key }}">
         <label for="f-{{ field.key }}">{{ field.label }}</label>
 
-        {% if field.kind == 'bool' %}
+        {% if field.key == 'box_sync_destination' %}
+          <div class="row">
+            <input type="text" id="f-{{ field.key }}" name="{{ field.key }}"
+                   data-kind="text" value="{{ values[field.key] }}" style="flex:1;min-width:0">
+            <button type="button" class="btn btn-small" id="browse-box-folder"
+                    aria-label="Browse for a local Box Sync folder">Browse…</button>
+          </div>
+
+        {% elif field.kind == 'bool' %}
           <label class="chk">
             <input type="checkbox" id="f-{{ field.key }}" name="{{ field.key }}"
                    data-kind="bool" {% if values[field.key] %}checked{% endif %}>

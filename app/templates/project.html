@@ -351,6 +351,25 @@
 
 <!-- Files + the prominent Transcribe action -->
 <div class="card">
+  <fieldset class="op-picker" id="operation-picker">
+    <legend>What do you want to do?</legend>
+    <div class="row">
+      <label class="chk">
+        <input type="radio" name="operation" value="transcribe"
+               {% if operation == 'transcribe' %}checked{% endif %}>
+        <span><strong>Transcribe</strong>
+          <span class="small muted">Write what was said in the language spoken</span></span>
+      </label>
+      <label class="chk">
+        <input type="radio" name="operation" value="translate"
+               {% if operation == 'translate' %}checked{% endif %}>
+        <span><strong>Translate to English</strong>
+          <span class="small muted">Translate speech into English text</span></span>
+      </label>
+    </div>
+    <p class="small muted">The selection is saved for this project. Spoken-language settings come from AI Settings.</p>
+    <span class="save-state" id="operation-state" role="status" aria-live="polite"></span>
+  </fieldset>
   <div class="row" style="margin-bottom:.8rem">
     <h2 style="margin:0">Recordings</h2>
     <span class="badge" id="doc-count">{{ stats.documents }}</span>
@@ -362,7 +381,7 @@
     </a>
     <button type="button" class="btn btn-transcribe btn-big" id="transcribe-btn"
       {% if not stats.pending and not stats.documents %}disabled{% endif %}>
-      Transcribe
+      {{ 'Translate to English' if operation == 'translate' else 'Transcribe' }}
       {% if stats.pending %}<span class="badge badge-ok">{{ stats.pending }}</span>{% endif %}
     </button>
   </div>
@@ -398,6 +417,7 @@
     slug: {{ project.slug|tojson }},
     projectId: {{ (project.project_id or project.slug)|tojson }},
     vocabularyProfileId: {{ (project.vocabulary_profile_id or '')|tojson }},
+    operation: {{ operation|tojson }},
     documents: {{ documents|tojson }},
     stats: {{ stats|tojson }},
   };

@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .config import PATHS, app_version
+from .config import PATHS, SETTINGS, app_version
 from .sensitivity import DEFAULT_SENSITIVITY, future_backup_gate, normalize_sensitivity, validate_sensitivity
 from .transcript import summary as transcript_summary
 
@@ -56,6 +56,7 @@ EDITABLE_FIELDS = (
     "vocabulary_profile_id",
     "tags",
     "data_sensitivity",
+    "operation",
 )
 
 _LOCK = threading.RLock()
@@ -87,7 +88,17 @@ def _validate_sensitivity(value) -> str:
 
 def _normalize_project(record: dict) -> dict:
     record["data_sensitivity"] = normalize_sensitivity(record.get("data_sensitivity"))
+    if record.get("operation") not in ("transcribe", "translate"):
+        record.pop("operation", None)
     return record
+
+
+def project_operation(project: dict) -> str:
+    operation = project.get("operation")
+    if operation in ("transcribe", "translate"):
+        return operation
+    default = SETTINGS.get("task")
+    return default if default in ("transcribe", "translate") else "transcribe"
 
 
 def _now() -> str:
@@ -189,6 +200,14 @@ def new_project_record(title: str, **fields) -> dict:
         if key == "data_sensitivity" and key in fields:
             record[key] = _validate_sensitivity(fields[key])
             continue
+        if key == "operation" and key in fields:
+            operation = fields[key]
+            if operation not in ("transcribe", "translate"):
+                raise ProjectValidationError(
+                    "Operation must be transcribe or translate."
+                )
+            record[key] = operation
+            continue
         if key in fields and fields[key] is not None:
             record[key] = fields[key]
     return record
@@ -231,6 +250,11 @@ def save_project(slug: str, updates: dict) -> dict:
             value = updates[key]
             if key == "data_sensitivity":
                 value = _validate_sensitivity(value)
+            elif key == "operation":
+                if value not in ("transcribe", "translate"):
+                    raise ProjectValidationError(
+                        "Operation must be transcribe or translate."
+                    )
             elif key == "tags":
                 if isinstance(value, str):
                     value = [t.strip() for t in value.split(",")]
