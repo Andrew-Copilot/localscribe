@@ -463,6 +463,14 @@ canvas.ribbon:focus-visible {
 .review-item { display: flex; align-items: center; gap: .45rem; min-width: 0; padding: .3rem .4rem; border-radius: 4px; background: var(--surface); }
 .review-item-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-item .btn { flex: 0 0 auto; }
+.workflow-stages { display: flex; flex-wrap: wrap; gap: .35rem; padding: 0; margin: .5rem 0 1rem; list-style: none; }
+.workflow-stages li { padding: .25rem .55rem; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-3); font-size: .75rem; }
+.workflow-stages li.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-dark); font-weight: 700; }
+.validation-panel .field { display: block; margin: .5rem 0; }
+.validation-panel .field > span { display: block; margin-bottom: .2rem; font-size: .78rem; }
+.validation-panel input, .validation-panel textarea { width: 100%; }
+.validation-history { margin-top: .65rem; font-size: .78rem; }
+.validation-history ol { display: flex; flex-direction: column; gap: .45rem; padding-left: 1.2rem; }
 .seg {
   display: grid; grid-template-columns: 92px minmax(0, 1fr);
   gap: .7rem; padding: .55rem .6rem;

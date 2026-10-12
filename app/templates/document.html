@@ -24,9 +24,17 @@
   </div>
 </div>
 
+<ol class="workflow-stages" aria-label="Transcript workflow">
+  {% for stage in workflow.stages %}
+  <li class="{{ 'active' if stage.active else '' }}"
+      {% if stage.active %}aria-current="step"{% endif %}>{{ stage.label }}</li>
+  {% endfor %}
+</ol>
+
 {% if not has_transcript %}
   <div class="empty">
     <h3>Not transcribed yet</h3>
+    <p class="badge">{{ workflow.label }}</p>
     <p>
       {{ document.status_detail or 'This recording has not been transcribed.' }}
     </p>
@@ -243,6 +251,62 @@
 
   <!-- Side panel -->
   <aside class="side-panel">
+    <section class="card validation-panel" id="validation-panel"
+             data-status="{{ workflow.status }}">
+      <h3>Validation sign-off</h3>
+      <p class="small muted">Status: <strong id="workflow-status">{{ workflow.label }}</strong></p>
+      <p class="small muted" id="export-provenance">
+        {% if workflow.export.exported_at %}
+          Latest export: {{ workflow.export.status }} · {{ workflow.export.exported_at }}
+          {% if workflow.export.formats %}· {{ workflow.export.formats|join(', ') }}{% endif %}
+        {% else %}
+          No export recorded yet.
+        {% endif %}
+      </p>
+      <p class="notice notice-warn small" id="validation-lock"
+         {% if workflow.status not in ('validated', 'exported') %}hidden{% endif %}>
+        Transcript changes are locked after sign-off. Reopen validation deliberately
+        before editing, re-timestamping, or restoring a revision.
+      </p>
+      {% if workflow.validated_at %}
+      <p class="small" id="validation-signoff">
+        Validated by {{ workflow.reviewer }} · {{ workflow.validated_at }}
+        {% if workflow.notes %}<br>{{ workflow.notes }}{% endif %}
+      </p>
+      {% else %}
+      <p class="small muted" id="validation-signoff">No validation sign-off recorded.</p>
+      {% endif %}
+      <label class="field">
+        <span>Reviewer</span>
+        <input type="text" id="validation-reviewer" maxlength="200"
+               value="{{ workflow.reviewer }}">
+      </label>
+      <label class="field">
+        <span>Notes / reason for reopening</span>
+        <textarea id="validation-notes" rows="3" maxlength="4000">{{ workflow.notes }}</textarea>
+      </label>
+      <div class="row">
+        <button type="button" class="btn btn-small" id="review-start"
+                {% if workflow.status != 'transcribed' %}hidden{% endif %}>Begin review</button>
+        <button type="button" class="btn btn-small btn-primary" id="validation-sign"
+                {% if workflow.status != 'in_review' %}hidden{% endif %}>Validate transcript</button>
+        <button type="button" class="btn btn-small btn-quiet" id="validation-reopen"
+                {% if workflow.status not in ('validated', 'exported') %}hidden{% endif %}>Reopen validation</button>
+      </div>
+      <details class="validation-history">
+        <summary>Validation and export history ({{ workflow.history|length }})</summary>
+        <ol id="validation-history">
+          {% for event in workflow.history|reverse %}
+          <li><strong>{{ event.action|replace('_', ' ')|title }}</strong>
+            · {{ event.reviewer or 'Reviewer not recorded' }} · {{ event.at }}
+            {% if event.notes %}<br>{{ event.notes }}{% endif %}
+            {% if event.formats %}<br>Formats: {{ event.formats|join(', ') }}{% endif %}
+          </li>
+          {% endfor %}
+        </ol>
+      </details>
+    </section>
+
     <div class="card">
       <h3>Finish the review</h3>
       <p class="small muted">
@@ -361,6 +425,7 @@
     filename: {{ document.filename|tojson }},
     lowConfidence: {{ low_confidence|tojson }},
     transcript: {{ transcript|tojson }},
+    workflow: {{ workflow|tojson }},
     speakers: {{ speakers|tojson }},
     palette: {{ palette|tojson }},
     pauseGap: {{ pause_gap|tojson }},
@@ -373,5 +438,6 @@
 <script src="/static/js/findreplace.js"></script>
 <script src="/static/js/proofread.js"></script>
 <script src="/static/js/review.js"></script>
+<script src="/static/js/validation.js"></script>
 {% endif %}
 {% endblock %}

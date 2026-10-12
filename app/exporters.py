@@ -87,6 +87,30 @@ def speaker_legend(doc: dict) -> list:
     return [(s.get("name", ""), s.get("short", "")) for s in speaker_roster(doc)]
 
 
+def provenance_rows(meta: dict) -> list:
+    provenance = meta.get("export_provenance") or {}
+    rows = []
+    if provenance.get("status"):
+        rows.append(("Export status", str(provenance["status"]).replace("_", " ").title()))
+    if provenance.get("workflow_status"):
+        rows.append((
+            "Workflow status",
+            str(provenance["workflow_status"]).replace("_", " ").title(),
+        ))
+    if provenance.get("reviewer"):
+        rows.append(("Validated by", str(provenance["reviewer"])))
+    if provenance.get("validated_at"):
+        rows.append(("Validated at", str(provenance["validated_at"])))
+    if provenance.get("exported_at"):
+        rows.append(("Exported at", str(provenance["exported_at"])))
+    if provenance.get("formats"):
+        rows.append(("Export formats", ", ".join(provenance["formats"])))
+    return [
+        (label, str(value).replace("\r", " ").replace("\n", " "))
+        for label, value in rows
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Timestamp formatting
 # ---------------------------------------------------------------------------
@@ -266,6 +290,11 @@ def write_vtt(doc: dict, dest: Path, settings: dict, meta: dict | None = None) -
     if title:
         # NOTE comments are valid WebVTT and ignored by players.
         out += [f"NOTE {title}", ""]
+    provenance = provenance_rows(meta or {})
+    if provenance:
+        out.append("NOTE Export provenance")
+        out.extend(f"{label}: {value}" for label, value in provenance)
+        out.append("")
 
     for index, cue in enumerate(cues, start=1):
         body = cue["text"]
@@ -348,6 +377,9 @@ def write_txt(doc: dict, dest: Path, settings: dict, meta: dict | None = None) -
 
 def _plain_header(doc: dict, meta: dict) -> list:
     info = summary(doc)
+    validated = (
+        (meta.get("export_provenance") or {}).get("workflow_status") == "validated"
+    )
     rows = []
     if meta.get("project"):
         rows.append(f"Project: {meta['project']}")
@@ -368,11 +400,15 @@ def _plain_header(doc: dict, meta: dict) -> list:
     rows.append(
         "Review status: "
         + (
+            "validated" if validated else
             "human-reviewed" if info["human_edited"] else
             "machine output, not yet reviewed"
         )
     )
-    if meta.get("generated"):
+    rows.extend(f"{label}: {value}" for label, value in provenance_rows(meta))
+    if meta.get("generated") and not (
+        (meta.get("export_provenance") or {}).get("exported_at")
+    ):
         rows.append(f"Exported: {meta['generated']}")
     return rows
 
@@ -383,6 +419,9 @@ def write_md(doc: dict, dest: Path, settings: dict, meta: dict | None = None) ->
     include_speakers = bool(settings.get("txt_include_speakers", True))
     meta = meta or {}
     info = summary(doc)
+    validated = (
+        (meta.get("export_provenance") or {}).get("workflow_status") == "validated"
+    )
 
     def esc(value) -> str:
         text = str(value if value is not None else "")
@@ -402,7 +441,12 @@ def write_md(doc: dict, dest: Path, settings: dict, meta: dict | None = None) ->
         lines.append(f'language: "{esc(info["language"])}"')
     lines.append(f'model: "{esc(info["model"])}"')
     lines.append("engine: faster-whisper (CTranslate2), executed locally")
-    lines.append(f"human_reviewed: {str(bool(info['human_edited'])).lower()}")
+    lines.append(
+        f"human_reviewed: {str(bool(info['human_edited'] or validated)).lower()}"
+    )
+    for label, value in provenance_rows(meta):
+        key = label.lower().replace(" ", "_")
+        lines.append(f'{key}: "{esc(value)}"')
     if info["retimestamped_at"]:
         lines.append(f'retimestamped_at: "{esc(info["retimestamped_at"])}"')
     legend = speaker_legend(doc)
@@ -476,6 +520,9 @@ def write_docx(doc: dict, dest: Path, settings: dict, meta: dict | None = None) 
     include_speakers = bool(settings.get("txt_include_speakers", True))
     meta = meta or {}
     info = summary(doc)
+    validated = (
+        (meta.get("export_provenance") or {}).get("workflow_status") == "validated"
+    )
 
     document = Document()
 
@@ -502,9 +549,11 @@ def write_docx(doc: dict, dest: Path, settings: dict, meta: dict | None = None) 
         ("Segments", str(info["segments"])),
         ("Language", info["language"] or "not recorded"),
         ("Model", info["model"]),
-        ("Review status", "Human-reviewed" if info["human_edited"]
+        ("Review status", "Validated" if validated else
+         "Human-reviewed" if info["human_edited"]
          else "Machine output, not yet reviewed"),
     ]
+    rows.extend(provenance_rows(meta))
     for key in ("principal_investigator", "irb_protocol", "participant_id"):
         if meta.get(key):
             rows.append((key.replace("_", " ").title(), str(meta[key])))
@@ -515,7 +564,9 @@ def write_docx(doc: dict, dest: Path, settings: dict, meta: dict | None = None) 
         )))
     elif info["speakers"]:
         rows.append(("Speakers", ", ".join(info["speakers"])))
-    if meta.get("generated"):
+    if meta.get("generated") and not (
+        (meta.get("export_provenance") or {}).get("exported_at")
+    ):
         rows.append(("Exported", str(meta["generated"])))
 
     table = document.add_table(rows=0, cols=2)

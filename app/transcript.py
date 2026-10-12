@@ -18,6 +18,8 @@ Shape
       "engine": {...},          # settings actually used, for reproducibility
       "stats": {...},           # throughput measured during transcription
       "human_edited": false,
+      "validation": {...},      # local sign-off and append-only workflow history
+      "export": {...},          # latest export status, formats, and source fingerprint
       "speakers": [             # the roster; see "Speakers" below
         {"id": "s1", "name": "Interviewer", "short": "INT", "color": "#0f766e"}
       ],
@@ -111,6 +113,19 @@ def new_document(
         "stats": {},
         "human_edited": False,
         "retimestamped_at": None,
+        "validation": {
+            "status": "transcribed",
+            "reviewer": "",
+            "validated_at": None,
+            "notes": "",
+            "history": [],
+        },
+        "export": {
+            "status": "not_exported",
+            "exported_at": None,
+            "formats": [],
+            "source_sha256": "",
+        },
         "speakers": [],
         "dictionary": [],
         "segments": [],

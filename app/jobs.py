@@ -19,7 +19,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import activity, catalog, exporters, media, projects
+from . import activity, catalog, exporters, media, projects, validation
 from .config import SETTINGS
 from .console import CONSOLE, fmt_bytes, fmt_duration, fmt_timestamp
 from .engine import ENGINE, Cancelled
@@ -500,10 +500,31 @@ class JobQueue:
             "notes": project.get("consent_notes"),
             "generated": _now(),
         }
+        formats = [
+            fmt for fmt in (settings.get("formats") or exporters.ALL_FORMATS)
+            if fmt in exporters.WRITERS
+        ]
+        meta["export_provenance"] = validation.provenance(
+            doc, meta["generated"], formats,
+        )
         t0 = time.monotonic()
         written = exporters.export_all(doc, out_dir, settings, meta)
 
         ok = [f for f, v in written.items() if not str(v).startswith("error")]
+        if ok:
+            validation.record_export(doc, meta["generated"], ok)
+            projects.save_transcript(slug, doc_id, doc, revision=False)
+        if "json" in ok:
+            meta["export_provenance"] = validation.provenance(
+                doc, meta["generated"], ok,
+            )
+            try:
+                exporters.write_json(
+                    doc, out_dir / "transcript.json", settings, meta,
+                )
+            except Exception as exc:
+                written["json"] = f"error: {exc}"
+                ok.remove("json")
         bad = {f: v for f, v in written.items() if str(v).startswith("error")}
         CONSOLE.success(
             f"Wrote {len(ok)} output file(s) in {time.monotonic() - t0:.2f}s: "

@@ -39,6 +39,7 @@ from . import (
     ranged,
     review,
     update_check,
+    validation,
     winlibs,
 )
 from .config import (
@@ -272,6 +273,7 @@ async def page_document(request: Request, slug: str, doc_id: str):
             outputs=projects.list_outputs(slug, doc_id),
             revisions=projects.list_revisions(slug, doc_id),
             speakers=speaker_roster(doc) if doc else [],
+            workflow=validation.snapshot(doc),
             palette=list(PALETTE),
             pause_gap=float(SETTINGS.get("paragraph_gap") or 1.5),
             proofreading={
@@ -1133,6 +1135,42 @@ async def api_import_project(
 # Transcript editing
 # ---------------------------------------------------------------------------
 
+def _export_outputs(slug: str, doc_id: str, doc: dict, record: dict, project: dict) -> dict:
+    settings = SETTINGS.all()
+    generated = projects._now()
+    formats = [
+        fmt for fmt in (settings.get("formats") or exporters.ALL_FORMATS)
+        if fmt in exporters.WRITERS
+    ]
+    meta = {
+        "title": Path(record.get("filename") or "transcript").stem,
+        "filename": record.get("filename"),
+        "project": project.get("title"),
+        "principal_investigator": project.get("principal_investigator"),
+        "irb_protocol": project.get("irb_protocol"),
+        "generated": generated,
+        "export_provenance": validation.provenance(doc, generated, formats),
+    }
+    out_dir = projects.outputs_dir(slug, doc_id)
+    written = exporters.export_all(doc, out_dir, settings, meta)
+    successful = [
+        fmt for fmt, result in written.items()
+        if not str(result).startswith("error")
+    ]
+    if successful:
+        validation.record_export(doc, generated, successful)
+        projects.save_transcript(slug, doc_id, doc, revision=False)
+    if "json" in successful:
+        meta["export_provenance"] = validation.provenance(
+            doc, generated, successful,
+        )
+        try:
+            exporters.write_json(doc, out_dir / "transcript.json", settings, meta)
+        except Exception as exc:
+            written["json"] = f"error: {exc}"
+    return written
+
+
 def _load_doc_or_404(slug: str, doc_id: str) -> dict:
     doc = projects.load_transcript(slug, doc_id)
     if doc is None:
@@ -1159,6 +1197,7 @@ async def api_save_transcript(slug: str, doc_id: str, request: Request):
     payload = await request.json()
     edits = payload.get("edits") or []
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
 
     apply_edits(doc, edits)
     keep = int(SETTINGS.get("autosave_revisions") or 20)
@@ -1187,6 +1226,7 @@ async def api_save_speakers(slug: str, doc_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Expected a 'speakers' list.")
 
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     report = set_roster(doc, roster)
     projects.save_transcript(
         slug, doc_id, doc, revision=False,
@@ -1218,6 +1258,7 @@ async def api_assign_speaker(slug: str, doc_id: str, request: Request):
     speaker_id = str(payload.get("speaker_id") or "")
 
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     try:
         changed = assign_speaker(doc, segment_ids, speaker_id)
     except ValueError as exc:
@@ -1244,6 +1285,7 @@ async def api_review_action(slug: str, doc_id: str, request: Request):
     """Persist a queue resolution or a manual segment flag in the transcript."""
     payload = await request.json()
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     try:
         state = review.apply_action(
             doc,
@@ -1258,6 +1300,33 @@ async def api_review_action(slug: str, doc_id: str, request: Request):
         keep=int(SETTINGS.get("autosave_revisions") or 20),
     )
     return {"review": state, "updated": doc.get("updated")}
+
+
+def _require_reopened(doc: dict) -> None:
+    try:
+        validation.require_reopened(doc)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/validation")
+async def api_validation_action(slug: str, doc_id: str, request: Request):
+    payload = await request.json()
+    doc = _load_doc_or_404(slug, doc_id)
+    try:
+        state = validation.transition(
+            doc,
+            str(payload.get("action") or ""),
+            str(payload.get("reviewer") or ""),
+            str(payload.get("notes") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    projects.save_transcript(
+        slug, doc_id, doc, revision=False,
+        keep=int(SETTINGS.get("autosave_revisions") or 20),
+    )
+    return {"validation": state, "updated": doc.get("updated")}
 
 
 @app.post("/api/projects/{slug}/documents/{doc_id}/proofread")
@@ -1331,6 +1400,7 @@ async def api_add_to_dictionary(slug: str, doc_id: str, request: Request):
         CONSOLE.info(f"Added '{word}' to the project glossary.", project=slug)
     else:
         doc = _load_doc_or_404(slug, doc_id)
+        _require_reopened(doc)
         accepted = doc.setdefault("dictionary", [])
         if word not in accepted:
             accepted.append(word)
@@ -1348,6 +1418,7 @@ async def api_add_to_dictionary(slug: str, doc_id: str, request: Request):
 @app.post("/api/projects/{slug}/documents/{doc_id}/retimestamp")
 async def api_retimestamp(slug: str, doc_id: str):
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     record = projects.load_document(slug, doc_id)
     project = projects.load_project(slug)
 
@@ -1366,17 +1437,7 @@ async def api_retimestamp(slug: str, doc_id: str):
     keep = int(SETTINGS.get("autosave_revisions") or 20)
     projects.save_transcript(slug, doc_id, doc, revision=True, keep=keep)
 
-    written = exporters.export_all(
-        doc, projects.outputs_dir(slug, doc_id), SETTINGS.all(),
-        {
-            "title": Path(record.get("filename") or "transcript").stem,
-            "filename": record.get("filename"),
-            "project": project.get("title"),
-            "principal_investigator": project.get("principal_investigator"),
-            "irb_protocol": project.get("irb_protocol"),
-            "generated": projects._now(),
-        },
-    )
+    written = _export_outputs(slug, doc_id, doc, record, project)
     ok = [f for f, v in written.items() if not str(v).startswith("error")]
     CONSOLE.success(
         f"Regenerated {len(ok)} output file(s) including captions: "
@@ -1389,6 +1450,7 @@ async def api_retimestamp(slug: str, doc_id: str):
         "transcript": doc,
         "summary": summary(doc),
         "outputs": projects.list_outputs(slug, doc_id),
+        "workflow": validation.snapshot(doc),
     }
 
 
@@ -1397,6 +1459,7 @@ async def api_split(slug: str, doc_id: str, seg_id: int, request: Request):
     payload = await request.json()
     word_index = int(payload.get("word_index") or 0)
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     split_segment(doc, seg_id, word_index)
     projects.save_transcript(slug, doc_id, doc, keep=int(SETTINGS.get("autosave_revisions") or 20))
     CONSOLE.info(f"Split segment #{seg_id + 1}", document=doc_id)
@@ -1406,6 +1469,7 @@ async def api_split(slug: str, doc_id: str, seg_id: int, request: Request):
 @app.post("/api/projects/{slug}/documents/{doc_id}/segment/{seg_id}/merge")
 async def api_merge(slug: str, doc_id: str, seg_id: int):
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     merge_segment(doc, seg_id)
     projects.save_transcript(slug, doc_id, doc, keep=int(SETTINGS.get("autosave_revisions") or 20))
     CONSOLE.info(f"Merged segment #{seg_id + 1} with the next one", document=doc_id)
@@ -1417,20 +1481,14 @@ async def api_reexport(slug: str, doc_id: str):
     doc = _load_doc_or_404(slug, doc_id)
     record = projects.load_document(slug, doc_id)
     project = projects.load_project(slug)
-    written = exporters.export_all(
-        doc, projects.outputs_dir(slug, doc_id), SETTINGS.all(),
-        {
-            "title": Path(record.get("filename") or "transcript").stem,
-            "filename": record.get("filename"),
-            "project": project.get("title"),
-            "principal_investigator": project.get("principal_investigator"),
-            "irb_protocol": project.get("irb_protocol"),
-            "generated": projects._now(),
-        },
-    )
+    written = _export_outputs(slug, doc_id, doc, record, project)
     ok = [f for f, v in written.items() if not str(v).startswith("error")]
     CONSOLE.success(f"Re-exported {len(ok)} file(s): {', '.join('.' + f for f in ok)}")
-    return {"written": written, "outputs": projects.list_outputs(slug, doc_id)}
+    return {
+        "written": written,
+        "outputs": projects.list_outputs(slug, doc_id),
+        "workflow": validation.snapshot(doc),
+    }
 
 
 @app.get("/api/projects/{slug}/documents/{doc_id}/revisions")
@@ -1440,10 +1498,15 @@ async def api_revisions(slug: str, doc_id: str):
 
 @app.post("/api/projects/{slug}/documents/{doc_id}/revisions/{revision_id}/restore")
 async def api_restore_revision(slug: str, doc_id: str, revision_id: str):
+    current = _load_doc_or_404(slug, doc_id)
+    _require_reopened(current)
     previous = projects.load_revision(slug, doc_id, revision_id)
     if previous is None:
         raise HTTPException(status_code=404, detail="That revision no longer exists.")
+    previous["validation"] = current.get("validation")
+    previous["export"] = current.get("export")
     normalise(previous)
+    validation.record_restore(previous, revision_id)
     projects.save_transcript(slug, doc_id, previous, keep=int(SETTINGS.get("autosave_revisions") or 20))
     CONSOLE.warn(f"Restored transcript revision {revision_id}", document=doc_id)
     return {"transcript": previous, "summary": summary(previous)}

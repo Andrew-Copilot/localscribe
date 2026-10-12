@@ -46,5 +46,21 @@ Flags and completion state are stored alongside each segment in
 review progress moves with project export, backup, and restore without a
 separate sidecar file.
 
+## Validation and export sign-off
+
+The document workflow progresses through **Draft → Transcribed → In review →
+Validated → Exported**. Begin review explicitly in the document's Validation
+sign-off panel. A validation sign-off records the reviewer, local timestamp,
+and notes in `transcript.json`; the audit list also records review starts,
+reopenings, and exports. Reopening a validated transcript requires a reviewer,
+a reason, and explicit confirmation. Editing, re-timestamping, or restoring a
+validated transcript is blocked until validation is reopened.
+
+Exports made before sign-off remain available but do not advance the workflow
+past its review stage. Exporting a validated transcript records the export
+time, formats, and a source fingerprint locally. Prose, Markdown, Word, JSON,
+and WebVTT outputs include applicable workflow/provenance fields; SubRip has
+no standard metadata channel.
+
 The standalone model checks are in `tests/test_review.py` and can be run with
 `python -m tests.test_review`.

@@ -1047,6 +1047,9 @@
         transcript = result.transcript;
         render();
         refreshOutputs(result.outputs);
+        if (result.workflow) {
+          document.dispatchEvent(new CustomEvent('ls:workflow', { detail: result.workflow }));
+        }
 
         const report = result.report;
         LS.toast(
@@ -1107,6 +1110,9 @@
       try {
         const result = await LS.post(`${api}/export`);
         refreshOutputs(result.outputs);
+        if (result.workflow) {
+          document.dispatchEvent(new CustomEvent('ls:workflow', { detail: result.workflow }));
+        }
         // The files themselves are fresh again even though word timings may
         // still be stale (that is a separate, still-true warning above).
         if (outputsStale) outputsStale.hidden = true;
