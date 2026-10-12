@@ -40,7 +40,8 @@
     }
 
     documents.forEach((doc) => {
-      const [cls, label] = STATUS[doc.status] || ['badge', doc.status];
+      const [cls, normalLabel] = STATUS[doc.status] || ['badge', doc.status];
+      const label = doc.media_missing ? 'Source media missing' : normalLabel;
       const media = doc.media || {};
       const kind = media.has_video ? 'video' : 'audio';
       const codec = media.audio_codec ? ` / ${media.audio_codec}` : '';
@@ -62,13 +63,19 @@
         <td class="num mono">${doc.words ? doc.words.toLocaleString() : '-'}</td>
         <td>
           <span class="${cls}">${LS.escapeHtml(label)}</span>
-          <div class="small muted status-detail">${LS.escapeHtml(doc.status_detail || '')}</div>
+          <div class="small muted status-detail">${LS.escapeHtml(
+            doc.media_missing
+              ? 'This archive did not include the original recording.'
+              : (doc.status_detail || '')
+          )}</div>
         </td>
         <td class="nowrap" style="text-align:right">
           ${done
             ? `<a class="btn btn-small" href="/project/${encodeURIComponent(slug)}/document/${encodeURIComponent(doc.id)}">Review</a>`
             : ''}
-          ${ACTIVE.includes(doc.status)
+          ${doc.media_missing
+            ? '<span class="small muted">Add the source recording to transcribe</span>'
+            : ACTIVE.includes(doc.status)
             ? '<span class="small muted">working...</span>'
             : `<button type="button" class="btn btn-small btn-quiet" data-act="one" data-id="${doc.id}">${done ? 'Redo' : 'Transcribe'}</button>`}
           <button type="button" class="btn btn-small btn-quiet btn-danger" data-act="del" data-id="${doc.id}">Remove</button>
@@ -77,9 +84,11 @@
     });
 
     const pending = documents.filter(
-      (d) => !ACTIVE.includes(d.status) && d.status !== 'unusable' && d.status !== 'transcribed'
+      (d) => !d.media_missing && !ACTIVE.includes(d.status) &&
+        d.status !== 'unusable' && d.status !== 'transcribed'
     ).length;
     const busy = documents.some((d) => ACTIVE.includes(d.status));
+    const missingMedia = documents.some((d) => d.media_missing);
 
     if (docCount) docCount.textContent = documents.length;
     if (transcribeBtn) {
@@ -91,7 +100,7 @@
           : 'Transcribe');
       if (!busy && !pending && documents.length) {
         transcribeBtn.disabled = true;
-        transcribeBtn.textContent = 'All transcribed';
+        transcribeBtn.textContent = missingMedia ? 'Source media missing' : 'All transcribed';
       }
     }
   }

@@ -89,13 +89,18 @@
 
       try {
         const result = await LS.request('POST', '/api/projects/import', body);
-        if (result.project.archive_integrity_verified) {
-          LS.toast(`Imported "${result.project.title}".`, 'ok');
-        } else {
-          window.alert(
-            `Imported "${result.project.title}", but this legacy archive could not be checksum-verified.`
-          );
-        }
+        const project = result.project;
+        const integrity = project.archive_integrity_verified
+          ? 'Archive integrity verified.'
+          : `Archive format v${project.archive_format_version || 1} has no verifiable checksums.`;
+        const missing = project.missing_media_documents || [];
+        const media = project.archive_includes_media === false
+          ? ' This transcript-only archive did not include source media.'
+          : '';
+        const missingDetail = missing.length
+          ? ` ${missing.length} recording${missing.length === 1 ? ' is' : 's are'} missing source media.`
+          : '';
+        window.alert(`Imported "${project.title}". ${integrity}${media}${missingDetail}`);
         location.href = `/project/${result.project.slug}`;
       } catch (err) {
         LS.toast(`Import failed: ${err.message}`, 'error', 10000);

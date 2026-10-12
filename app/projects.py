@@ -398,6 +398,7 @@ def list_documents(slug: str) -> list:
     root = project_dir(slug) / "documents"
     if not root.is_dir():
         return []
+    project_root = project_dir(slug).resolve()
     out = []
     for entry in sorted(root.iterdir()):
         if not entry.is_dir():
@@ -407,6 +408,14 @@ def list_documents(slug: str) -> list:
             continue
         record["id"] = record.get("id") or entry.name
         record["has_transcript"] = (entry / TRANSCRIPT_FILE).exists()
+        media_rel = record.get("media_path")
+        if media_rel:
+            try:
+                media_path = (project_root / _safe_archive_path(media_rel)).resolve()
+                media_path.relative_to(project_root)
+                record["media_missing"] = not media_path.is_file()
+            except (ProjectError, TypeError, ValueError):
+                record["media_missing"] = True
         out.append(record)
     out.sort(key=lambda r: r.get("created") or "")
     return out
@@ -792,6 +801,12 @@ def _validate_archive(archive: zipfile.ZipFile) -> dict:
         return manifest
     if version != 2:
         raise ProjectError("This project archive uses an unsupported format version.")
+    if (
+        not isinstance(manifest.get("includes_media"), bool)
+        or not isinstance(manifest.get("documents"), list)
+        or not isinstance(manifest.get("transcription_provenance"), list)
+    ):
+        raise ProjectError("The project archive manifest is missing required version 2 fields.")
 
     entries = manifest.get("files")
     if not isinstance(entries, list):
@@ -919,6 +934,34 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
                 if slug != incoming:
                     record["title"] = f"{record.get('title') or slug} (imported)"
                 record["updated"] = _now()
+                missing_media_documents = []
+                documents_root = stage / "documents"
+                if documents_root.is_dir():
+                    for directory in documents_root.iterdir():
+                        if not directory.is_dir():
+                            continue
+                        document = read_json(directory / DOCUMENT_FILE, {}) or {}
+                        if not isinstance(document, dict):
+                            continue
+                        media_rel = document.get("media_path")
+                        if not media_rel:
+                            continue
+                        try:
+                            media_path = (stage / _safe_archive_path(media_rel)).resolve()
+                            media_path.relative_to(stage.resolve())
+                            media_present = media_path.is_file()
+                        except (ProjectError, TypeError, ValueError):
+                            media_present = False
+                        if not media_present:
+                            missing_media_documents.append(
+                                document.get("id") or directory.name
+                            )
+                record["archive_import"] = {
+                    "format_version": manifest.get("format_version", 1),
+                    "integrity_verified": manifest["integrity_verified"],
+                    "includes_media": manifest.get("includes_media"),
+                    "missing_media_documents": missing_media_documents,
+                }
                 write_json(stage / PROJECT_FILE, record)
 
                 for directory in ("media", "documents"):
@@ -939,6 +982,9 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
                 record["stats"] = project_stats(slug)
                 record["imported_from"] = Path(archive_path).name
                 record["archive_integrity_verified"] = manifest["integrity_verified"]
+                record["archive_format_version"] = manifest.get("format_version", 1)
+                record["archive_includes_media"] = manifest.get("includes_media")
+                record["missing_media_documents"] = missing_media_documents
                 return record
     except zipfile.BadZipFile as exc:
         raise ProjectError("That file is not a readable archive.") from exc

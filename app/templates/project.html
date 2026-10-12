@@ -23,6 +23,26 @@
   </div>
 </div>
 
+{% if project.archive_import %}
+<div class="notice {% if project.archive_import.integrity_verified %}notice-info{% else %}notice-warn{% endif %}"
+     role="status" style="margin-bottom:1rem">
+  <strong>
+    {% if project.archive_import.integrity_verified %}
+      Archive integrity verified (format v{{ project.archive_import.format_version }}).
+    {% else %}
+      Archive integrity could not be verified (format v{{ project.archive_import.format_version }}).
+    {% endif %}
+  </strong>
+  {% if project.archive_import.includes_media == false %}
+    This transcript-only archive did not include source media.
+  {% endif %}
+  {% if project.archive_import.missing_media_documents %}
+    {{ project.archive_import.missing_media_documents|length }} recording(s) have missing source media.
+    Transcripts and project metadata remain available.
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="card" id="recovery-card">
   <div class="row">
     <h2>Recovery snapshots</h2>

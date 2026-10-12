@@ -85,6 +85,12 @@ def test_versioned_export_and_restore():
               imported["project_id"] == project["project_id"]
               and imported["data_sensitivity"] == "may_contain_phi")
         check("restore reports verified integrity", imported["archive_integrity_verified"])
+        check("transcript-only import records missing media",
+              imported["archive_includes_media"] is False
+              and imported["missing_media_documents"] == [doc["id"]]
+              and imported["archive_import"]["integrity_verified"])
+        check("document listing identifies missing source media",
+              projects.list_documents(imported["slug"])[0]["media_missing"])
         check("restore retains transcript",
               (projects.document_dir(imported["slug"], doc["id"]) / projects.TRANSCRIPT_FILE).exists())
 
@@ -160,11 +166,29 @@ def test_legacy_archive_and_unsafe_paths():
               not (config.PATHS.projects / "unsafe-study").exists())
 
 
+def test_golden_version_one_archive():
+    fixture = Path(__file__).parent / "fixtures" / "project-v1.lsproj"
+    with project_root():
+        manifest = projects.inspect_archive(fixture)
+        check("golden v1 archive stays inspectable", manifest["format_version"] == 1)
+        imported = projects.import_project(fixture)
+        documents = projects.list_documents(imported["slug"])
+        check("golden v1 import remains unverifiable",
+              not imported["archive_integrity_verified"]
+              and imported["archive_format_version"] == 1)
+        check("golden v1 transcript and missing-media state survive",
+              len(documents) == 1
+              and documents[0]["has_transcript"]
+              and documents[0]["media_missing"]
+              and imported["missing_media_documents"] == ["legacy-doc"])
+
+
 def main() -> int:
     tests = [
         test_versioned_export_and_restore,
         test_tampering_is_rejected_before_replace,
         test_legacy_archive_and_unsafe_paths,
+        test_golden_version_one_archive,
     ]
     for test in tests:
         print(f"\n{test.__name__}")

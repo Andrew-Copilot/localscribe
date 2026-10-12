@@ -235,7 +235,10 @@ single versioned `.lsproj` archive with per-file SHA-256 checksums; **Import
 project** verifies those checksums before restoring. You can export with or
 without source media. Transient caches and logs are excluded. Older archives
 remain importable, but their contents cannot be checksum-verified; Local Scribe
-warns when one is imported.
+warns when one is imported. Transcript-only imports identify recordings whose
+source media is missing, while keeping their transcripts available. See the
+[`.lsproj` interchange format specification](docs/lsproj-format.md) for the
+manifest, provenance, integrity, and migration contract.
 
 ### Privacy Center
 
