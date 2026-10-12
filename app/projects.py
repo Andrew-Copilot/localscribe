@@ -720,6 +720,8 @@ def export_project(
         archive_name = relative.as_posix()
         if archive_name == MANIFEST_FILE:
             continue
+        if path.name.casefold() == "deidentification.local.json":
+            continue
         if any(part.casefold() in transient_directories for part in relative.parts):
             continue
         if path.name.casefold() == "waveform.json" or path.name.casefold().endswith(".tmp"):

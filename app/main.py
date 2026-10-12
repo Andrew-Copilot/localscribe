@@ -32,6 +32,7 @@ from . import (
     box_sync,
     catalog,
     diagnostics,
+    deidentification,
     exporters,
     health,
     handoff,
@@ -1410,6 +1411,56 @@ async def api_review_action(slug: str, doc_id: str, request: Request):
         keep=int(SETTINGS.get("autosave_revisions") or 20),
     )
     return {"review": state, "updated": doc.get("updated")}
+
+
+@app.get("/api/projects/{slug}/documents/{doc_id}/deidentification")
+async def api_deidentification_report(slug: str, doc_id: str):
+    _load_doc_or_404(slug, doc_id)
+    return deidentification.get_report(slug, doc_id)
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/deidentification/scan")
+async def api_deidentification_scan(slug: str, doc_id: str, request: Request):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected scan options.")
+    doc = _load_doc_or_404(slug, doc_id)
+    try:
+        return deidentification.scan(
+            slug, doc_id, doc,
+            flags=payload.get("flags"),
+            custom_patterns=payload.get("custom_patterns"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/deidentification/{action}")
+async def api_deidentification_action(
+    slug: str, doc_id: str, action: str, request: Request,
+):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected a review item.")
+    doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
+    item_id = str(payload.get("item_id") or "")
+    try:
+        if action == "skip":
+            return deidentification.skip(slug, doc_id, item_id)
+        if action == "replace":
+            doc, report = deidentification.replace(slug, doc_id, doc, item_id)
+        elif action == "undo":
+            doc, report = deidentification.undo(slug, doc_id, doc, item_id)
+        else:
+            raise HTTPException(status_code=404, detail="Unknown de-identification action.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    projects.save_transcript(
+        slug, doc_id, doc, revision=True,
+        keep=int(SETTINGS.get("autosave_revisions") or 20),
+    )
+    return {"transcript": doc, **report}
 
 
 @app.post("/api/projects/{slug}/documents/{doc_id}/annotations")

@@ -33,6 +33,11 @@ annotations are merged by stable ID and kept with the
 canonical `transcript.json`; each has a comment/question type, recording time,
 creation timestamp, and optional author.
 
+The local de-identification report and reversible replacement map are not part
+of an `.lsreview` package. Only the current transcript is included, so review
+any findings and replacements before creating a handoff. This assistance can
+miss identifiers or flag ordinary text and is not a compliance guarantee.
+
 The included media is the original source file, not a real-time stream. Media
 is excluded by default. Do not include it unless the reviewer needs it and the
 transfer destination is approved for that data.

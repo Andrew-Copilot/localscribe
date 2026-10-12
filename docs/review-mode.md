@@ -58,6 +58,28 @@ package here; if the local transcript diverged, both versions are kept for
 comparison and an explicit choice. See the
 [offline handoff guide](offline-handoff.md).
 
+## De-identification review assistance
+
+The editor can flag possible email addresses, phone numbers, Social Security
+numbers, dates, IP addresses, street addresses, and web addresses, and accepts
+additional user-supplied regular expressions. Findings are suggestions, not
+verified identifiers. Each replacement or skip is an explicit reviewer action.
+Replacements use visible tokens and can be undone while the token remains
+unchanged; applying and undoing each creates a transcript revision.
+
+The local report records flagged, resolved, and skipped findings. Replacement
+mappings and this report are kept in the document's
+`deidentification.local.json` sidecar, not in the transcript, and are excluded
+from `.lsproj` and `.lsreview` exports. A project archive can still contain
+earlier transcript revisions, which may include the pre-replacement text;
+inspect the archive contents and follow your organization's approved process
+before sharing.
+
+This feature is review assistance only. It can miss identifiers and produce
+false positives; it does not guarantee anonymization, de-identification, or
+compliance with any law, regulation, or policy. Review the full document and
+follow an appropriate privacy/compliance review process.
+
 ## Validation and export sign-off
 
 The document workflow progresses through **Draft → Transcribed → In review →

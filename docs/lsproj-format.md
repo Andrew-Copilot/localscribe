@@ -30,6 +30,11 @@ regular on-disk schemas. Transient caches, logs, `waveform.json`, and temporary
 files are not interchange payload. Browser preview audio is omitted when source
 media is omitted.
 
+The local de-identification report and reversible replacement map
+(`deidentification.local.json`) are explicitly excluded from `.lsproj` exports.
+Transcript revisions remain part of the project tree and can contain earlier,
+unreplaced text; review the archive before sharing it.
+
 ## Version 2 manifest
 
 The manifest is UTF-8 JSON with these fields:

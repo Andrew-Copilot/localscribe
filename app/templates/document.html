@@ -216,6 +216,41 @@
         <ol class="review-items" id="review-items"></ol>
       </section>
 
+      <section class="card" id="deidentification-review" aria-labelledby="deidentification-title">
+        <h3 id="deidentification-title">De-identification review assistance</h3>
+        <p class="notice notice-warn">
+          Assistive flags only: findings can be missed or incorrect. Review the
+          transcript and every replacement yourself. This is not anonymization,
+          a compliance guarantee, or a substitute for an approved privacy review.
+        </p>
+        <p class="small muted">
+          The findings report and reversible replacement map stay in this local
+          project and are excluded from shareable project and review exports.
+        </p>
+        <div class="review-filters" aria-label="Identifier types to flag">
+          <label class="chk"><input type="checkbox" data-deid-flag="email" checked> Email</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="phone" checked> Phone</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="ssn" checked> Possible SSN</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="date" checked> Dates</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="ip_address" checked> IP address</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="address" checked> Possible street address</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="url" checked> Web address</label>
+        </div>
+        <div class="field">
+          <label for="deid-custom-patterns">Additional custom patterns (one per line: label: regex)</label>
+          <textarea id="deid-custom-patterns" rows="3"
+                    placeholder="Patient ID: \bPT-\d{6}\b"></textarea>
+        </div>
+        <div class="row">
+          <button type="button" class="btn btn-small btn-primary" id="deid-scan">
+            Scan for possible identifiers
+          </button>
+          <span class="small muted" id="deid-status" role="status" aria-live="polite"></span>
+        </div>
+        <div class="review-counts" id="deid-counts" aria-live="polite"></div>
+        <ol class="review-items" id="deid-items"></ol>
+      </section>
+
       <section class="review-queue" id="annotations-panel" aria-labelledby="annotations-title">
         <h3 id="annotations-title">Timestamped comments and questions</h3>
         <p class="small muted">
@@ -505,6 +540,7 @@
 <script src="/static/js/findreplace.js"></script>
 <script src="/static/js/proofread.js"></script>
 <script src="/static/js/review.js"></script>
+<script src="/static/js/deidentification.js"></script>
 <script src="/static/js/handoff.js"></script>
 <script src="/static/js/validation.js"></script>
 {% endif %}
