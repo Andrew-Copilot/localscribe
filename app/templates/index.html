@@ -34,6 +34,9 @@
 <!-- New project form -->
 <form class="card" id="new-project" hidden>
   <h2>New project</h2>
+  {% with sensitivity_id="np-sensitivity", sensitivity_value="unknown_treat_as_phi" %}
+    {% include "sensitivity_field.html" %}
+  {% endwith %}
   <div class="field">
     <label for="np-title">Project title</label>
     <input type="text" id="np-title" name="title" required
@@ -65,6 +68,7 @@
   {% for p in projects %}
   <a class="proj-card" href="/project/{{ p.slug }}">
     <h3>{{ p.title }}</h3>
+    <div class="meta">User-declared sensitivity: {{ sensitivity_labels[p.data_sensitivity] }}</div>
     {% if p.description %}
       <div class="meta">{{ p.description[:150] }}{% if p.description|length > 150 %}...{% endif %}</div>
     {% endif %}

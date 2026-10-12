@@ -7,6 +7,7 @@
 <div class="page-head">
   <div class="grow">
     <h1>{{ project.title }}</h1>
+    <p id="project-sensitivity">User-declared sensitivity: {{ sensitivity_labels[project.data_sensitivity] }}</p>
     {% if project.description %}<p class="lede">{{ project.description }}</p>{% endif %}
     <p class="small muted">
       {{ stats.documents }} file{{ '' if stats.documents == 1 else 's' }}
@@ -25,6 +26,9 @@
 <!-- Project metadata: explicit save, unlike the transcript editor's autosave -->
 <form class="card" id="meta-form" hidden>
   <h2>Project details</h2>
+  {% with sensitivity_id="m-sensitivity", sensitivity_value=project.data_sensitivity %}
+    {% include "sensitivity_field.html" %}
+  {% endwith %}
   <p class="card-note">
     This metadata travels with the project when you export it, and is written
     into the header of every transcript file.

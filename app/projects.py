@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import PATHS, app_version
+from .sensitivity import DEFAULT_SENSITIVITY, future_backup_gate, normalize_sensitivity, validate_sensitivity
 from .transcript import summary as transcript_summary
 
 PROJECT_FILE = "project.json"
@@ -51,6 +52,7 @@ EDITABLE_FIELDS = (
     "consent_notes",
     "glossary",
     "tags",
+    "data_sensitivity",
 )
 
 _LOCK = threading.RLock()
@@ -59,6 +61,22 @@ _SLUG_CLEAN = re.compile(r"[^a-z0-9]+")
 
 class ProjectError(Exception):
     """A project operation failed for a reason worth showing the user."""
+
+
+class ProjectValidationError(ProjectError):
+    """Incoming project metadata is invalid."""
+
+
+def _validate_sensitivity(value) -> str:
+    try:
+        return validate_sensitivity(value)
+    except ValueError as exc:
+        raise ProjectValidationError(str(exc)) from exc
+
+
+def _normalize_project(record: dict) -> dict:
+    record["data_sensitivity"] = normalize_sensitivity(record.get("data_sensitivity"))
+    return record
 
 
 def _now() -> str:
@@ -149,11 +167,15 @@ def new_project_record(title: str, **fields) -> dict:
         "consent_notes": "",
         "glossary": "",
         "tags": [],
+        "data_sensitivity": DEFAULT_SENSITIVITY,
         "created": _now(),
         "updated": _now(),
         "app_version": app_version(),
     }
     for key in EDITABLE_FIELDS:
+        if key == "data_sensitivity" and key in fields:
+            record[key] = _validate_sensitivity(fields[key])
+            continue
         if key in fields and fields[key] is not None:
             record[key] = fields[key]
     return record
@@ -184,7 +206,7 @@ def load_project(slug: str) -> dict:
     if record is None:
         raise ProjectError(f"Project '{slug}' was not found.")
     record["slug"] = root.name
-    return record
+    return _normalize_project(record)
 
 
 def save_project(slug: str, updates: dict) -> dict:
@@ -194,13 +216,41 @@ def save_project(slug: str, updates: dict) -> dict:
             if key not in updates:
                 continue
             value = updates[key]
-            if key == "tags":
+            if key == "data_sensitivity":
+                value = _validate_sensitivity(value)
+            elif key == "tags":
                 if isinstance(value, str):
                     value = [t.strip() for t in value.split(",")]
                 value = [str(t).strip() for t in (value or []) if str(t).strip()]
             else:
                 value = str(value if value is not None else "").strip()
             record[key] = value
+        record["updated"] = _now()
+        write_json(project_dir(slug) / PROJECT_FILE, record)
+        return record
+
+
+def record_box_health_override(
+    slug: str, destination_root: Path, *, independently_verified_box_health: bool = False
+) -> dict:
+    """Record only the latest explicit attestation, not a reusable permission."""
+    with _LOCK:
+        record = load_project(slug)
+        destination_root = Path(destination_root)
+        result = future_backup_gate(
+            record["data_sensitivity"], destination_root.name,
+            independently_verified_box_health=independently_verified_box_health,
+        )
+        if not result.override_used or not destination_root.is_absolute():
+            raise ProjectValidationError(
+                "An override requires explicit independent Box Health verification "
+                "for a PHI/unknown project and an absolute destination folder path."
+            )
+        record["box_health_override"] = {
+            "confirmed_at": _now(),
+            "destination_root": str(destination_root),
+            "independently_verified_box_health": True,
+        }
         record["updated"] = _now()
         write_json(project_dir(slug) / PROJECT_FILE, record)
         return record
@@ -224,6 +274,7 @@ def list_projects() -> list:
         if record is None:
             continue
         record["slug"] = entry.name
+        _normalize_project(record)
         record["stats"] = project_stats(entry.name)
         out.append(record)
     out.sort(key=lambda r: r.get("updated") or "", reverse=True)
@@ -377,6 +428,7 @@ def touch_project(slug: str) -> None:
     root = project_dir(slug)
     record = read_json(root / PROJECT_FILE)
     if record is not None:
+        _normalize_project(record)
         record["updated"] = _now()
         write_json(root / PROJECT_FILE, record)
 
@@ -580,6 +632,7 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
                 "be imported."
             )
         record["slug"] = slug
+        _normalize_project(record)
         if slug != incoming:
             record["title"] = f"{record.get('title') or slug} (imported)"
         record["updated"] = _now()

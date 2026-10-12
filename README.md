@@ -282,6 +282,7 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_realign      # re-timestamping
 .venv/Scripts/python.exe -m tests.test_exporters     # captions and exports
 .venv/Scripts/python.exe -m tests.test_assets        # front-end asset guards
+.venv/Scripts/python.exe -m tests.test_sensitivity   # project declarations and future backup policy
 .venv/Scripts/python.exe -m tests.test_speakers      # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts
 .venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery
@@ -289,6 +290,12 @@ the repetition penalty slightly, then re-transcribe.
 ```
 
 On macOS and Linux use `.venv/bin/python` instead.
+
+Projects have a user-declared source-media sensitivity, defaulting to
+**Unknown — treat as PHI**. This controls future backup safeguards, not whether
+data is PHI, and provides no compliance advice. See the
+[Box Sync decision and local guardrails](docs/box-sync-decision.md).
+This foundation does not implement backup.
 
 ## Versioning
 
