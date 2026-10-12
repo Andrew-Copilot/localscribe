@@ -4,6 +4,7 @@
 # control.
 projects/
 *.lsproj
+*.lsreview
 # This deterministic, synthetic compatibility fixture contains no user data.
 !tests/fixtures/project-v1.lsproj
 

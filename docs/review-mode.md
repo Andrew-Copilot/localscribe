@@ -46,6 +46,18 @@ Flags and completion state are stored alongside each segment in
 review progress moves with project export, backup, and restore without a
 separate sidecar file.
 
+Timestamped comments and questions are stored in the transcript as well. Use
+**Use current playhead** to anchor a note to the recording time, then add its
+text and optional author. Selecting a note's timestamp returns playback to
+that point. Notes can be removed while the transcript is editable.
+
+For an offline reviewer, export a review package for this selected transcript,
+optionally including its original source media and instructions. The `.lsreview`
+file is an explicit file transfer, not a live connection. Import the returned
+package here; if the local transcript diverged, both versions are kept for
+comparison and an explicit choice. See the
+[offline handoff guide](offline-handoff.md).
+
 ## Validation and export sign-off
 
 The document workflow progresses through **Draft → Transcribed → In review →

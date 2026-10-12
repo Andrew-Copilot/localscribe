@@ -1180,6 +1180,9 @@
     setSaveState,
     refreshOutputs,
     playFrom,
+    currentTime: () => audio ? audio.currentTime : 0,
+    annotations: () => transcript.annotations || [],
+    setAnnotations(value) { transcript.annotations = value || []; },
   };
 
   render();

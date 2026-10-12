@@ -128,6 +128,7 @@ def new_document(
         },
         "speakers": [],
         "dictionary": [],
+        "annotations": [],
         "segments": [],
     }
 
@@ -611,6 +612,8 @@ def normalise(doc: dict) -> dict:
 
     doc.setdefault("speakers", [])
     doc.setdefault("dictionary", [])
+    if not isinstance(doc.get("annotations"), list):
+        doc["annotations"] = []
     migrate_speakers(doc)
 
     segments.sort(key=lambda s: (float(s.get("start") or 0.0), float(s.get("end") or 0.0)))

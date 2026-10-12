@@ -33,6 +33,7 @@ from . import (
     diagnostics,
     exporters,
     health,
+    handoff,
     media,
     proofread,
     projects,
@@ -1300,6 +1301,136 @@ async def api_review_action(slug: str, doc_id: str, request: Request):
         keep=int(SETTINGS.get("autosave_revisions") or 20),
     )
     return {"review": state, "updated": doc.get("updated")}
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/annotations")
+async def api_add_annotation(slug: str, doc_id: str, request: Request):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected an annotation object.")
+    doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
+    try:
+        annotations = handoff.clean_annotations([{
+            "id": uuid4().hex,
+            "kind": payload.get("kind"),
+            "text": payload.get("text"),
+            "at": payload.get("at"),
+            "segment_id": payload.get("segment_id"),
+            "author": payload.get("author"),
+            "created_at": projects._now(),
+        }], doc.get("duration"))
+    except handoff.HandoffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    annotation = annotations[0]
+    doc["annotations"] = handoff.merge_annotations(
+        doc.get("annotations") or [], [annotation], duration=doc.get("duration")
+    )
+    projects.save_transcript(
+        slug, doc_id, doc, revision=False,
+        keep=int(SETTINGS.get("autosave_revisions") or 20),
+    )
+    return {"annotation": annotation, "annotations": doc["annotations"]}
+
+
+@app.delete("/api/projects/{slug}/documents/{doc_id}/annotations/{annotation_id}")
+async def api_delete_annotation(slug: str, doc_id: str, annotation_id: str):
+    doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
+    annotations = doc.get("annotations") or []
+    kept = [item for item in annotations if str(item.get("id")) != annotation_id]
+    if len(kept) == len(annotations):
+        raise HTTPException(status_code=404, detail="That annotation was not found.")
+    doc["annotations"] = kept
+    projects.save_transcript(
+        slug, doc_id, doc, revision=False,
+        keep=int(SETTINGS.get("autosave_revisions") or 20),
+    )
+    return {"annotations": kept}
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/handoff/export")
+async def api_export_handoff(slug: str, doc_id: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected handoff options.")
+    if not isinstance(payload.get("include_media", False), bool):
+        raise HTTPException(status_code=400, detail="'include_media' must be a boolean.")
+    try:
+        package = handoff.create_package(
+            slug, doc_id, PATHS.logs,
+            include_media=payload.get("include_media", False),
+            instructions=payload.get("instructions", ""),
+        )
+    except handoff.HandoffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(package, filename=package.name, media_type="application/zip")
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/handoff/import")
+async def api_import_handoff(slug: str, doc_id: str, file: UploadFile):
+    _require_reopened(_load_doc_or_404(slug, doc_id))
+    staging = PATHS.logs / f"handoff-{os.getpid()}-{uuid4().hex}{handoff.PACKAGE_SUFFIX}"
+    try:
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        size = 0
+        with staging.open("xb") as output:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > handoff.MAX_PACKAGE_BYTES:
+                    raise HTTPException(status_code=413, detail="Review package is larger than 4 GiB.")
+                output.write(chunk)
+        result = handoff.import_package(staging, slug, doc_id)
+    except HTTPException:
+        raise
+    except handoff.HandoffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        staging.unlink(missing_ok=True)
+    return {
+        **result,
+        "conflicts": handoff.list_conflicts(slug, doc_id),
+        "annotations": (projects.load_transcript(slug, doc_id) or {}).get("annotations", []),
+    }
+
+
+@app.get("/api/projects/{slug}/documents/{doc_id}/handoff/conflicts")
+async def api_handoff_conflicts(slug: str, doc_id: str):
+    _load_doc_or_404(slug, doc_id)
+    return {"conflicts": handoff.list_conflicts(slug, doc_id)}
+
+
+@app.get("/api/projects/{slug}/documents/{doc_id}/handoff/conflicts/{conflict_id}/{version}")
+async def api_handoff_conflict_version(slug: str, doc_id: str, conflict_id: str, version: str):
+    try:
+        path = handoff.conflict_file(slug, doc_id, conflict_id, version)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, filename=f"{version}-transcript.json", media_type="application/json")
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/handoff/conflicts/{conflict_id}/resolve")
+async def api_resolve_handoff_conflict(slug: str, doc_id: str, conflict_id: str, request: Request):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected a conflict resolution choice.")
+    choice = str(payload.get("choice") or "")
+    if choice == "incoming":
+        _require_reopened(_load_doc_or_404(slug, doc_id))
+    try:
+        record = handoff.resolve_conflict(
+            slug, doc_id, conflict_id, choice
+        )
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"conflict": record}
 
 
 def _require_reopened(doc: dict) -> None:

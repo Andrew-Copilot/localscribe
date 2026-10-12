@@ -29,7 +29,10 @@ researchers, by researchers, who are concerned about data security and protectio
 
 Speed up transcript generation, keep your data fully secure and in your custody, and keep humans as the validators of data. 
 
-This app is designed for protected human-subjects data by never allowing data to leave your local computer. No data is transferred at any time to a third party. All of the AI runs directly on your own computer. You can also edit and clean up transcript
+This app is designed for protected human-subjects data: transcription and editing
+run locally, and data is not automatically sent to an external service. You can
+deliberately export a review package or backup and are responsible for choosing
+an approved transfer destination. All of the AI runs directly on your own computer. You can also edit and clean up transcript
 files directly in the app with the virtual editor, with several
 quality-of-life features like being able to quickly replay segments,
 visualizing words the AI system has low confidence in categorizing, and
@@ -37,14 +40,17 @@ having timestamps clearly marked. It is intended to do the hard work of
 getting a first draft done and increasing the speed by which humans validate
 and de-identify transcripts for research. Review Mode queues uncertain,
 possibly-artifactual, unassigned, flagged, and recently changed segments;
-its progress travels with project exports. See the
-[Review Mode guide](docs/review-mode.md). All data are protected as well,
-giving you assurance for your subjects' privacy.
+its progress travels with project exports. Timestamped comments and questions
+travel with an optional, explicitly exported offline review package; Local
+Scribe does not synchronize reviewer copies in real time. See the
+[Review Mode guide](docs/review-mode.md) and
+[offline handoff guide](docs/offline-handoff.md).
 
 Local Scribe transcribes audio and video with OpenAI's Whisper models entirely
 on your own computer, then gives you a browser workbench for correcting the
-transcript against the audio. Nothing is uploaded: no cloud service, no
-account, no telemetry, and no third-party assets in the interface.
+transcript against the audio. There is no cloud transcription service, account,
+telemetry, or third-party asset in the interface; any review package or backup
+is created only when you explicitly request it.
 
 In this version, this app is for English-only texts. It may handle multilingual transcription and accents well via the Whisper AI models used, but additional language outputs are not yet available. Multiple-language testing has not yet been conducted.
 
@@ -309,6 +315,7 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_assets        # front-end asset guards
 .venv/Scripts/python.exe -m tests.test_sensitivity   # project declarations and future backup policy
 .venv/Scripts/python.exe -m tests.test_project_archives # archive integrity and legacy compatibility
+.venv/Scripts/python.exe -m tests.test_handoff        # offline review packages and conflict handling
 .venv/Scripts/python.exe -m tests.test_recovery       # local snapshots and recovery safeguards
 .venv/Scripts/python.exe -m tests.test_privacy_center # sanitized diagnostics and activity history
 .venv/Scripts/python.exe -m tests.test_health         # local health and model disk estimates
