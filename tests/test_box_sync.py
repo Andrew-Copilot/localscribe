@@ -5,7 +5,9 @@ Run with: python -m tests.test_box_sync
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import threading
 import tempfile
 import time
@@ -16,6 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import activity, box_sync, config, projects
+from fastapi import HTTPException, Request
 
 FAILURES: list = []
 
@@ -114,6 +117,14 @@ def test_explicit_destination_and_sensitivity_gate():
         else:
             check("relative destination is rejected", False)
 
+        settings.values["box_sync_destination"] = "\x00invalid"
+        try:
+            box_sync.configured_destination()
+        except box_sync.BackupError:
+            check("malformed destination path is rejected", True)
+        else:
+            check("malformed destination path is rejected", False)
+
         settings.values["box_sync_destination"] = str(projects.project_dir(project["slug"]))
         try:
             box_sync.configured_destination()
@@ -211,6 +222,11 @@ def test_copy_verification_and_retry_after_interruption():
                       f"documents/{projects.list_documents(project['slug'])[0]['id']}/"
                       f"{projects.TRANSCRIPT_FILE}"
                   ))
+            media_entry = next(
+                name for name in archive.namelist() if name.startswith("media/")
+            )
+            check("archive media remains compressed",
+                  archive.getinfo(media_entry).compress_type == zipfile.ZIP_DEFLATED)
         check("backup outcome is recorded without a configured path",
               bool(activity.recent(project_id=project["project_id"]))
               and str(destination) not in str(activity.recent()))
@@ -281,11 +297,78 @@ def test_cancellation_cleans_partial_output():
               completed["status"] == "complete" and completed["verified"])
 
 
+def test_backup_api_and_project_ui():
+    with backup_context() as (_root, destination, settings, project, _):
+        with patch("app.update_check.refresh_state_async"), patch.object(
+            config, "install_offline_guard"
+        ):
+            from app import main as web
+
+        original_settings = web.SETTINGS
+        web.SETTINGS = settings
+
+        def request(payload=None):
+            scope = {
+                "type": "http", "method": "GET" if payload is None else "POST",
+                "path": "/", "headers": [], "scheme": "http",
+                "server": ("127.0.0.1", 43707), "query_string": b"",
+            }
+
+            async def receive():
+                body = b"" if payload is None else json.dumps(payload).encode()
+                return {"type": "http.request", "body": body, "more_body": False}
+
+            return Request(scope, receive)
+
+        async def exercise():
+            try:
+                await web.api_start_box_backup(
+                    project["slug"],
+                    request({"confirm_sync_destination": False}),
+                )
+            except HTTPException as exc:
+                check("backup API requires destination confirmation",
+                      exc.status_code == 400)
+            else:
+                check("backup API requires destination confirmation", False)
+
+            page = await web.page_project(request(), project["slug"])
+            check("project UI shows Box Sync confirmation and media option",
+                  b"Back up to Box Sync" in page.body
+                  and b"confirm-box-sync-destination" in page.body
+                  and b"box-backup-include-media" in page.body)
+            check("project UI does not reveal configured absolute path",
+                  str(destination).encode() not in page.body)
+
+            result = await web.api_start_box_backup(
+                project["slug"],
+                request({
+                    "confirm_sync_destination": True,
+                    "independently_verified_box_health": False,
+                    "include_media": False,
+                }),
+            )
+            job_id = result["backup"]["job_id"]
+            completed = wait_for_job(box_sync.BACKUPS, project["slug"], job_id)
+            status = await web.api_get_box_backup(project["slug"], job_id)
+            check("backup API reports completed verified copy",
+                  completed["status"] == "complete"
+                  and status["backup"]["verified"])
+            check("backup API exposes no destination path",
+                  str(destination) not in str(status))
+
+        try:
+            asyncio.run(exercise())
+        finally:
+            web.SETTINGS = original_settings
+
+
 def main() -> int:
     for test in (
         test_explicit_destination_and_sensitivity_gate,
         test_copy_verification_and_retry_after_interruption,
         test_cancellation_cleans_partial_output,
+        test_backup_api_and_project_ui,
     ):
         print(f"\n{test.__name__}")
         test()

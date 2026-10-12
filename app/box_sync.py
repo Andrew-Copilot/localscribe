@@ -23,12 +23,15 @@ def configured_destination() -> Path:
     raw = config.SETTINGS.get("box_sync_destination")
     if not isinstance(raw, str) or not raw.strip():
         raise BackupError("Configure a local Box Sync folder in AI Settings first.")
-    path = Path(raw.strip()).expanduser()
+    try:
+        path = Path(raw.strip()).expanduser()
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise BackupError("The configured Box Sync folder path is invalid.") from exc
     if not path.is_absolute():
         raise BackupError("The configured Box Sync folder must be an absolute path.")
     try:
         path = path.resolve(strict=True)
-    except OSError as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         raise BackupError("The configured Box Sync folder is unavailable.") from exc
     if not path.is_dir():
         raise BackupError("The configured Box Sync location is not a folder.")

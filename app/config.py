@@ -416,7 +416,8 @@ SETTINGS_SCHEMA = [
             _f("box_sync_destination", "Local Box Sync folder", "text", "",
                "Optional path to a folder you selected inside your existing U of I "
                "Box Sync desktop client. Local Scribe cannot verify that the folder "
-               "is synchronized or approved. No folder is selected automatically."),
+               "is synchronized or approved. No folder is selected automatically. "
+               "Offline Lock must be off before copying."),
         ],
     },
 ]
