@@ -428,7 +428,8 @@ class JobQueue:
             job.progress = 0.12 + 0.83 * snapshot["progress"]
             job.stats = snapshot
             job.detail = (
-                f"Transcribing {int(snapshot['progress'] * 100)}% - "
+                f"{'Translating' if operation == 'translate' else 'Transcribing'} "
+                f"{int(snapshot['progress'] * 100)}% - "
                 f"{snapshot['eta_text']} remaining"
             )
 
@@ -516,8 +517,9 @@ class JobQueue:
 
         info_summary = summary(doc)
         stats = result["stats"]
+        operation_name = "Translation" if operation == "translate" else "Transcription"
         CONSOLE.success(
-            f"Transcription complete: {info_summary['words']} words in "
+            f"{operation_name} complete: {info_summary['words']} words in "
             f"{info_summary['segments']} segments, "
             f"{fmt_duration(stats['wall_seconds'])} of processing for "
             f"{fmt_duration(duration)} of audio "
@@ -526,7 +528,7 @@ class JobQueue:
         )
         if info_summary["low_confidence"]:
             CONSOLE.info(
-                f"{info_summary['low_confidence']} words were transcribed with "
+                f"{info_summary['low_confidence']} words were generated with "
                 "low confidence and are highlighted in the editor for review.",
                 low_confidence=info_summary["low_confidence"],
             )

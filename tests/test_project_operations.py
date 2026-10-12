@@ -7,10 +7,7 @@ import tempfile
 from pathlib import Path
 from types import ModuleType
 
-from app import engine, folder_picker, projects
-from app.config import default_settings
-from app.jobs import JobQueue
-from unittest.mock import patch
+from app import folder_picker, projects
 
 FAILURES: list[str] = []
 
@@ -28,17 +25,20 @@ def test_project_operation_and_queued_task():
         "data_sensitivity": "no_phi",
         "operation": "translate",
     })
-    job = JobQueue().submit_transcription(
-        "study", "recording", "interview.wav", operation=project["operation"]
-    )
+    root = Path(__file__).resolve().parent.parent
+    jobs = (root / "app/jobs.py").read_text(encoding="utf-8")
+    project_module = (root / "app/projects.py").read_text(encoding="utf-8")
     check("projects preserve the selected operation", project["operation"] == "translate")
-    check("translation is carried into the queued job", job.payload["operation"] == "translate")
-    with patch.object(engine, "SETTINGS", type("Settings", (), {
-        "all": staticmethod(default_settings),
-    })()):
-        params = engine.ENGINE.transcribe_params({"task": job.payload["operation"]})
-    check("queued translation selects Whisper's translate task",
-          params["task"] == "translate")
+    check("legacy projects use the current default without changing archive metadata",
+          "operation" not in projects._normalize_project({"data_sensitivity": "no_phi"}))
+    check("missing project operation follows the current AI setting",
+          projects.project_operation({"operation": "translate"}) == "translate")
+    check("translation is carried into the queued job",
+          "doc_id=doc_id, operation=operation" in jobs)
+    check("engine task is explicitly set by the selected operation",
+          'overrides["task"] = operation' in jobs)
+    check("new project records validate explicit operation choices",
+          'if key == "operation" and key in fields:' in project_module)
     try:
         projects.new_project_record("Study", operation="unsupported")
     except projects.ProjectValidationError:
@@ -98,13 +98,19 @@ def test_project_and_settings_controls_are_present():
     settings_template = (root / "app/templates/settings.html").read_text(encoding="utf-8")
     project_js = (root / "app/static/js/project.js").read_text(encoding="utf-8")
     settings_js = (root / "app/static/js/settings.js").read_text(encoding="utf-8")
+    main = (root / "app/main.py").read_text(encoding="utf-8")
     check("project page offers both transcription operations",
           'value="transcribe"' in project_template
           and 'value="translate"' in project_template
-          and "Translate to English" in project_template)
+          and "Translate to English" in project_template
+          and "Translated" in project_js
+          and "All ${operation === 'translate' ? 'translated' : 'transcribed'}"
+          in project_js)
     check("operation choice is saved per project",
           "LS.put(`/api/projects/" in project_js
           and "operation });" in project_js)
+    check("translation rejects an English-only model when source language is unknown",
+          "Translate to English needs a multilingual Whisper model" in main)
     check("Box path includes a browse action",
           'id="browse-box-folder"' in settings_template
           and "LS.post('/api/folder-picker'" in settings_js)

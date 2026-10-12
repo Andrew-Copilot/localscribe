@@ -44,7 +44,11 @@
 
     documents.forEach((doc) => {
       const [cls, normalLabel] = STATUS[doc.status] || ['badge', doc.status];
-      const label = doc.media_missing ? 'Source media missing' : normalLabel;
+      const label = doc.media_missing
+        ? 'Source media missing'
+        : (doc.status === 'transcribed' && doc.operation === 'translate'
+          ? 'Translated'
+          : normalLabel);
       const media = doc.media || {};
       const kind = media.has_video ? 'video' : 'audio';
       const codec = media.audio_codec ? ` / ${media.audio_codec}` : '';
@@ -80,7 +84,7 @@
             ? '<span class="small muted">Add the source recording to transcribe</span>'
             : ACTIVE.includes(doc.status)
             ? '<span class="small muted">working...</span>'
-            : `<button type="button" class="btn btn-small btn-quiet" data-act="one" data-id="${doc.id}">${done ? 'Redo' : 'Transcribe'}</button>`}
+            : `<button type="button" class="btn btn-small btn-quiet" data-act="one" data-id="${doc.id}">${done ? 'Redo' : (operation === 'translate' ? 'Translate' : 'Transcribe')}</button>`}
           <button type="button" class="btn btn-small btn-quiet btn-danger" data-act="del" data-id="${doc.id}">Remove</button>
         </td>`;
       rows.appendChild(tr);
@@ -92,18 +96,21 @@
     ).length;
     const busy = documents.some((d) => ACTIVE.includes(d.status));
     const missingMedia = documents.some((d) => d.media_missing);
+    const action = operation === 'translate' ? 'Translate to English' : 'Transcribe';
 
     if (docCount) docCount.textContent = documents.length;
     if (transcribeBtn) {
       transcribeBtn.disabled = busy || (!pending && !documents.length);
       transcribeBtn.innerHTML = busy
-        ? 'Transcribing...'
+        ? `${operation === 'translate' ? 'Translating' : 'Transcribing'}...`
         : (pending
-          ? `Transcribe <span class="badge badge-ok">${pending}</span>`
-          : 'Transcribe');
+          ? `${action} <span class="badge badge-ok">${pending}</span>`
+          : action);
       if (!busy && !pending && documents.length) {
         transcribeBtn.disabled = true;
-        transcribeBtn.textContent = missingMedia ? 'Source media missing' : 'All transcribed';
+        transcribeBtn.textContent = missingMedia
+          ? 'Source media missing'
+          : `All ${operation === 'translate' ? 'translated' : 'transcribed'}`;
       }
     }
   }
@@ -174,7 +181,9 @@
 
       if (result.queued.length) {
         LS.toast(
-          `Queued ${LS.plural(result.queued.length, 'file')} for transcription. ` +
+          `Queued ${LS.plural(result.queued.length, 'file')} for ${
+            operation === 'translate' ? 'translation' : 'transcription'
+          }. ` +
           `Watch the console for progress.`, 'ok');
       }
       if (result.skipped.length && !result.queued.length) {
@@ -209,10 +218,7 @@
       try {
         await LS.put(`/api/projects/${encodeURIComponent(slug)}`, { operation: selected });
         operation = selected;
-        if (transcribeBtn) {
-          transcribeBtn.childNodes[0].textContent =
-            selected === 'translate' ? 'Translate to English ' : 'Transcribe ';
-        }
+        render();
         if (operationState) operationState.textContent = 'Saved';
       } catch (err) {
         operationPicker.querySelector(`input[value="${operation}"]`).checked = true;

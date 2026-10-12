@@ -252,7 +252,7 @@ async def page_project(request: Request, slug: str):
                 if activity.category(event.get("action")) == "recovery"
             ],
             box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
-            operation=project.get("operation") or "transcribe",
+            operation=projects.project_operation(project),
             vocabulary_profiles=profiles,
             vocabulary_profile_available=any(
                 item["id"] == project.get("vocabulary_profile_id")
@@ -1014,7 +1014,7 @@ async def api_transcribe(slug: str, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     operation = payload.get("operation") if isinstance(payload, dict) else None
     if operation is None:
-        operation = project.get("operation") or "transcribe"
+        operation = projects.project_operation(project)
     if operation not in ("transcribe", "translate"):
         raise HTTPException(
             status_code=400,
@@ -1029,6 +1029,26 @@ async def api_transcribe(slug: str, request: Request):
             detail=(
                 f"{spec.label if spec else status['selected_model']} has not "
                 "been downloaded yet. Open AI Settings and download it first."
+            ),
+        )
+    spec = catalog.model_spec(status["selected_model"])
+    spoken_language = str(SETTINGS.get("language") or "auto").strip().lower()
+    if (
+        operation == "translate"
+        and spec
+        and spec.languages == "English only"
+        and not (
+            spoken_language == "english"
+            or spoken_language == "en"
+            or spoken_language.startswith(("en-", "en_"))
+        )
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Translate to English needs a multilingual Whisper model for "
+                "non-English speech. Choose one in AI Settings or set the spoken "
+                "language to English."
             ),
         )
 
@@ -1054,10 +1074,12 @@ async def api_transcribe(slug: str, request: Request):
         queued.append({"id": doc_id, "job": job.id, "filename": record["filename"]})
 
     if not queued:
-        CONSOLE.info("Nothing to transcribe: every file is done or in progress.")
+        action = "translate" if operation == "translate" else "transcribe"
+        CONSOLE.info(f"Nothing to {action}: every file is done or in progress.")
     else:
+        action = "translation" if operation == "translate" else "transcription"
         CONSOLE.step(
-            f"Queued {len(queued)} file(s) for transcription",
+            f"Queued {len(queued)} file(s) for {action}",
             files=[q["filename"] for q in queued],
         )
 

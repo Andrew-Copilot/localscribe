@@ -88,11 +88,17 @@ def _validate_sensitivity(value) -> str:
 
 def _normalize_project(record: dict) -> dict:
     record["data_sensitivity"] = normalize_sensitivity(record.get("data_sensitivity"))
-    operation = record.get("operation")
-    if operation not in ("transcribe", "translate"):
-        operation = SETTINGS.get("task") or "transcribe"
-    record["operation"] = operation
+    if record.get("operation") not in ("transcribe", "translate"):
+        record.pop("operation", None)
     return record
+
+
+def project_operation(project: dict) -> str:
+    operation = project.get("operation")
+    if operation in ("transcribe", "translate"):
+        return operation
+    default = SETTINGS.get("task")
+    return default if default in ("transcribe", "translate") else "transcribe"
 
 
 def _now() -> str:
@@ -186,7 +192,6 @@ def new_project_record(title: str, **fields) -> dict:
         "vocabulary_profile_id": "",
         "tags": [],
         "data_sensitivity": DEFAULT_SENSITIVITY,
-        "operation": SETTINGS.get("task") or "transcribe",
         "created": _now(),
         "updated": _now(),
         "app_version": app_version(),
