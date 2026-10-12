@@ -10,6 +10,9 @@
   const transcribeBtn = document.getElementById('transcribe-btn');
   const docCount = document.getElementById('doc-count');
   const queueNote = document.getElementById('queue-note');
+  const operationPicker = document.getElementById('operation-picker');
+  const operationState = document.getElementById('operation-state');
+  let operation = window.PROJECT.operation || 'transcribe';
 
   const ACTIVE = ['queued', 'probing', 'decoding', 'transcribing'];
 
@@ -165,7 +168,7 @@
 
     try {
       const result = await LS.post(`/api/projects/${encodeURIComponent(slug)}/transcribe`,
-        ids ? { documents: ids, force: true } : {});
+        { ...(ids ? { documents: ids, force: true } : {}), operation });
       documents = result.documents || documents;
       render();
 
@@ -195,6 +198,30 @@
 
   if (transcribeBtn) {
     transcribeBtn.addEventListener('click', () => startTranscription(null));
+  }
+
+  if (operationPicker) {
+    operationPicker.addEventListener('change', async (event) => {
+      const selected = event.target.value;
+      if (!['transcribe', 'translate'].includes(selected) || selected === operation) return;
+      operationPicker.querySelectorAll('input').forEach((input) => { input.disabled = true; });
+      if (operationState) operationState.textContent = 'Saving…';
+      try {
+        await LS.put(`/api/projects/${encodeURIComponent(slug)}`, { operation: selected });
+        operation = selected;
+        if (transcribeBtn) {
+          transcribeBtn.childNodes[0].textContent =
+            selected === 'translate' ? 'Translate to English ' : 'Transcribe ';
+        }
+        if (operationState) operationState.textContent = 'Saved';
+      } catch (err) {
+        operationPicker.querySelector(`input[value="${operation}"]`).checked = true;
+        if (operationState) operationState.textContent = 'Not saved';
+        LS.toast(`Could not save operation: ${err.message}`, 'error');
+      } finally {
+        operationPicker.querySelectorAll('input').forEach((input) => { input.disabled = false; });
+      }
+    });
   }
 
   /* Console traffic drives the table: a finished or failed job refreshes it,

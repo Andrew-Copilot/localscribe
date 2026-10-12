@@ -34,6 +34,7 @@ from . import (
     diagnostics,
     deidentification,
     exporters,
+    folder_picker,
     health,
     handoff,
     media,
@@ -251,6 +252,7 @@ async def page_project(request: Request, slug: str):
                 if activity.category(event.get("action")) == "recovery"
             ],
             box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
+            operation=project.get("operation") or "transcribe",
             vocabulary_profiles=profiles,
             vocabulary_profile_available=any(
                 item["id"] == project.get("vocabulary_profile_id")
@@ -453,6 +455,25 @@ async def ws_console(websocket: WebSocket):
 @app.get("/api/settings")
 async def api_get_settings():
     return {"values": SETTINGS.all(), "schema": SETTINGS_SCHEMA}
+
+
+@app.post("/api/folder-picker")
+async def api_folder_picker(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    initial_path = payload.get("initial_path", "") if isinstance(payload, dict) else ""
+    try:
+        selected = await asyncio.to_thread(
+            folder_picker.choose_folder, str(initial_path or "")
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="A desktop folder picker is unavailable. Enter the folder path manually.",
+        ) from exc
+    return {"path": selected}
 
 
 @app.post("/api/settings")
@@ -987,10 +1008,18 @@ async def api_transcribe(slug: str, request: Request):
     force = bool(payload.get("force")) if isinstance(payload, dict) else False
 
     try:
-        projects.load_project(slug)
+        project = projects.load_project(slug)
         documents = projects.list_documents(slug)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    operation = payload.get("operation") if isinstance(payload, dict) else None
+    if operation is None:
+        operation = project.get("operation") or "transcribe"
+    if operation not in ("transcribe", "translate"):
+        raise HTTPException(
+            status_code=400,
+            detail="Operation must be transcribe or translate.",
+        )
 
     status = ENGINE.status()
     if not status["model_downloaded"]:
@@ -1018,7 +1047,9 @@ async def api_transcribe(slug: str, request: Request):
             skipped.append({"id": doc_id, "reason": "Already transcribed"})
             continue
 
-        job = QUEUE.submit_transcription(slug, doc_id, record["filename"])
+        job = QUEUE.submit_transcription(
+            slug, doc_id, record["filename"], operation=operation
+        )
         projects.set_status(slug, doc_id, "queued", "Waiting in the queue")
         queued.append({"id": doc_id, "job": job.id, "filename": record["filename"]})
 

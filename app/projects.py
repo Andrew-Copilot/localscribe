@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .config import PATHS, app_version
+from .config import PATHS, SETTINGS, app_version
 from .sensitivity import DEFAULT_SENSITIVITY, future_backup_gate, normalize_sensitivity, validate_sensitivity
 from .transcript import summary as transcript_summary
 
@@ -56,6 +56,7 @@ EDITABLE_FIELDS = (
     "vocabulary_profile_id",
     "tags",
     "data_sensitivity",
+    "operation",
 )
 
 _LOCK = threading.RLock()
@@ -87,6 +88,10 @@ def _validate_sensitivity(value) -> str:
 
 def _normalize_project(record: dict) -> dict:
     record["data_sensitivity"] = normalize_sensitivity(record.get("data_sensitivity"))
+    operation = record.get("operation")
+    if operation not in ("transcribe", "translate"):
+        operation = SETTINGS.get("task") or "transcribe"
+    record["operation"] = operation
     return record
 
 
@@ -181,6 +186,7 @@ def new_project_record(title: str, **fields) -> dict:
         "vocabulary_profile_id": "",
         "tags": [],
         "data_sensitivity": DEFAULT_SENSITIVITY,
+        "operation": SETTINGS.get("task") or "transcribe",
         "created": _now(),
         "updated": _now(),
         "app_version": app_version(),
@@ -231,6 +237,11 @@ def save_project(slug: str, updates: dict) -> dict:
             value = updates[key]
             if key == "data_sensitivity":
                 value = _validate_sensitivity(value)
+            elif key == "operation":
+                if value not in ("transcribe", "translate"):
+                    raise ProjectValidationError(
+                        "Operation must be transcribe or translate."
+                    )
             elif key == "tags":
                 if isinstance(value, str):
                     value = [t.strip() for t in value.split(",")]
