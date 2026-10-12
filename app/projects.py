@@ -535,10 +535,13 @@ def list_outputs(slug: str, doc_id: str) -> list:
 def export_project(slug: str, dest_dir: Path | None = None, include_media: bool = True) -> Path:
     """Write a versioned, checksummed .lsproj archive of a project."""
     record = load_project(slug)
+    slug = record["slug"]
     root = project_dir(slug)
-    dest_dir = Path(dest_dir or PATHS.logs)
+    dest_dir = Path(dest_dir or PATHS.logs).resolve()
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{slug}-{datetime.now().strftime('%Y%m%d-%H%M%S')}{EXPORT_SUFFIX}"
+    dest = (dest_dir / f"{slug}-{datetime.now().strftime('%Y%m%d-%H%M%S')}{EXPORT_SUFFIX}").resolve()
+    if dest.parent != dest_dir:
+        raise ProjectError("The export destination must be a direct child of its output folder.")
 
     documents = list_documents(slug)
     project_id = record.get("project_id") or record.get("slug") or slug
@@ -593,32 +596,36 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
     project_json["data_sensitivity"] = record.get(
         "data_sensitivity", DEFAULT_SENSITIVITY
     )
+    created = False
     try:
-        with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as archive:
-            for path, archive_name in paths:
-                if archive_name == PROJECT_FILE:
-                    archive.writestr(
-                        archive_name,
-                        json.dumps(project_json, indent=2, ensure_ascii=False),
-                    )
-                else:
-                    archive.write(path, archive_name)
+        with dest.open("x+b") as output:
+            created = True
+            with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+                for path, archive_name in paths:
+                    if archive_name == PROJECT_FILE:
+                        archive.writestr(
+                            archive_name,
+                            json.dumps(project_json, indent=2, ensure_ascii=False),
+                        )
+                    else:
+                        archive.write(path, archive_name)
 
-            for info in archive.infolist():
-                digest = hashlib.sha256()
-                size = 0
-                with archive.open(info) as source:
-                    for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                        size += len(chunk)
-                        digest.update(chunk)
-                manifest.setdefault("files", []).append({
-                    "path": info.filename,
-                    "size_bytes": size,
-                    "sha256": digest.hexdigest(),
-                })
-            archive.writestr(MANIFEST_FILE, json.dumps(manifest, indent=2))
+                for info in archive.infolist():
+                    digest = hashlib.sha256()
+                    size = 0
+                    with archive.open(info) as source:
+                        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                            size += len(chunk)
+                            digest.update(chunk)
+                    manifest.setdefault("files", []).append({
+                        "path": info.filename,
+                        "size_bytes": size,
+                        "sha256": digest.hexdigest(),
+                    })
+                archive.writestr(MANIFEST_FILE, json.dumps(manifest, indent=2))
     except Exception:
-        dest.unlink(missing_ok=True)
+        if created:
+            dest.unlink(missing_ok=True)
         raise
 
     return dest
