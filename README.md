@@ -29,7 +29,10 @@ researchers, by researchers, who are concerned about data security and protectio
 
 Speed up transcript generation, keep your data fully secure and in your custody, and keep humans as the validators of data. 
 
-This app is designed for protected human-subjects data by never allowing data to leave your local computer. No data is transferred at any time to a third party. All of the AI runs directly on your own computer. You can also edit and clean up transcript
+This app is designed for protected human-subjects data: transcription and editing
+run locally, and data is not automatically sent to an external service. You can
+deliberately export a review package or backup and are responsible for choosing
+an approved transfer destination. All of the AI runs directly on your own computer. You can also edit and clean up transcript
 files directly in the app with the virtual editor, with several
 quality-of-life features like being able to quickly replay segments,
 visualizing words the AI system has low confidence in categorizing, and
@@ -37,14 +40,17 @@ having timestamps clearly marked. It is intended to do the hard work of
 getting a first draft done and increasing the speed by which humans validate
 and de-identify transcripts for research. Review Mode queues uncertain,
 possibly-artifactual, unassigned, flagged, and recently changed segments;
-its progress travels with project exports. See the
-[Review Mode guide](docs/review-mode.md). All data are protected as well,
-giving you assurance for your subjects' privacy.
+its progress travels with project exports. Timestamped comments and questions
+travel with an optional, explicitly exported offline review package; Local
+Scribe does not synchronize reviewer copies in real time. See the
+[Review Mode guide](docs/review-mode.md) and
+[offline handoff guide](docs/offline-handoff.md).
 
 Local Scribe transcribes audio and video with OpenAI's Whisper models entirely
 on your own computer, then gives you a browser workbench for correcting the
-transcript against the audio. Nothing is uploaded: no cloud service, no
-account, no telemetry, and no third-party assets in the interface.
+transcript against the audio. There is no cloud transcription service, account,
+telemetry, or third-party asset in the interface; any review package or backup
+is created only when you explicitly request it.
 
 In this version, this app is for English-only texts. It may handle multilingual transcription and accents well via the Whisper AI models used, but additional language outputs are not yet available. Multiple-language testing has not yet been conducted.
 
@@ -209,6 +215,25 @@ Written into `projects/<project>/documents/<id>/outputs/`:
 | `transcript.srt` | SubRip captions |
 | `transcript.json` | Full word-level data for analysis |
 
+## Reusable vocabulary and study presets
+
+On a project's page, create a profile from a term list or import UTF-8 `.txt`
+and `.csv` files, then assign it to that project. Profiles are stored locally
+with application settings and can be reused across projects. CSV files may use
+a `term`, `terms`, `word`, or `words` column. A profile can target initial-prompt
+context or hotwords and can optionally set language, task, beam size, best-of,
+or multilingual/VAD options; a settings-only study preset is also supported.
+Terms are combined with the corresponding
+existing AI setting rather than silently replacing it; the existing project
+glossary fallback remains intact.
+
+Project archives and transcription provenance record the profile identity and
+applied settings, but not the profile's vocabulary terms by default. The
+separate local profile library is not bundled into a project export. Transcript
+content and existing project metadata retain their normal export behavior.
+Download **Uncertain-term report (CSV)** from the project page to review each
+word whose model confidence is below the editor's low-confidence threshold.
+
 ## Supported input formats
 
 **Audio** wav, mp3, m4a, aac, flac, ogg, opus, wma, aiff, amr, ac3, mka, caf, au
@@ -226,6 +251,7 @@ projects/            your projects: media, transcripts, exports
 models/              downloaded Whisper weights
 logs/                rotating application log and the pidfile
 settings.json        your settings
+vocabulary_profiles.json   local reusable vocabulary and preset library
 .venv/               the private Python environment
 ```
 
@@ -235,7 +261,10 @@ single versioned `.lsproj` archive with per-file SHA-256 checksums; **Import
 project** verifies those checksums before restoring. You can export with or
 without source media. Transient caches and logs are excluded. Older archives
 remain importable, but their contents cannot be checksum-verified; Local Scribe
-warns when one is imported.
+warns when one is imported. Transcript-only imports identify recordings whose
+source media is missing, while keeping their transcripts available. See the
+[`.lsproj` interchange format specification](docs/lsproj-format.md) for the
+manifest, provenance, integrity, and migration contract.
 
 ### Privacy Center
 
@@ -306,12 +335,14 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_assets        # front-end asset guards
 .venv/Scripts/python.exe -m tests.test_sensitivity   # project declarations and future backup policy
 .venv/Scripts/python.exe -m tests.test_project_archives # archive integrity and legacy compatibility
+.venv/Scripts/python.exe -m tests.test_handoff        # offline review packages and conflict handling
 .venv/Scripts/python.exe -m tests.test_recovery       # local snapshots and recovery safeguards
 .venv/Scripts/python.exe -m tests.test_privacy_center # sanitized diagnostics and activity history
 .venv/Scripts/python.exe -m tests.test_health         # local health and model disk estimates
 .venv/Scripts/python.exe -m tests.test_box_sync       # local Box Sync copy safeguards
 .venv/Scripts/python.exe -m tests.test_speakers       # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts
+.venv/Scripts/python.exe -m tests.test_vocabulary    # reusable profiles and presets
 .venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery
 .venv/Scripts/python.exe -m tests.test_engine_fallback  # GPU-to-CPU fallback
 ```

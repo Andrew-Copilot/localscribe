@@ -106,12 +106,19 @@ const LS = (() => {
 
   function debounce(fn, ms) {
     let timer = null;
+    let pending = Promise.resolve();
+    const run = (...args) => {
+      timer = null;
+      pending = Promise.resolve().then(() => fn(...args));
+      return pending;
+    };
     const wrapped = (...args) => {
       clearTimeout(timer);
-      timer = setTimeout(() => { timer = null; fn(...args); }, ms);
+      timer = setTimeout(() => { run(...args).catch(() => {}); }, ms);
     };
     wrapped.flush = (...args) => {
-      if (timer) { clearTimeout(timer); timer = null; fn(...args); }
+      if (timer) { clearTimeout(timer); return run(...args); }
+      return pending;
     };
     wrapped.pending = () => timer !== null;
     return wrapped;

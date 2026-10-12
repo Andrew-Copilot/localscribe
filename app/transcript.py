@@ -18,6 +18,8 @@ Shape
       "engine": {...},          # settings actually used, for reproducibility
       "stats": {...},           # throughput measured during transcription
       "human_edited": false,
+      "validation": {...},      # local sign-off and append-only workflow history
+      "export": {...},          # latest export status, formats, and source fingerprint
       "speakers": [             # the roster; see "Speakers" below
         {"id": "s1", "name": "Interviewer", "short": "INT", "color": "#0f766e"}
       ],
@@ -111,8 +113,22 @@ def new_document(
         "stats": {},
         "human_edited": False,
         "retimestamped_at": None,
+        "validation": {
+            "status": "transcribed",
+            "reviewer": "",
+            "validated_at": None,
+            "notes": "",
+            "history": [],
+        },
+        "export": {
+            "status": "not_exported",
+            "exported_at": None,
+            "formats": [],
+            "source_sha256": "",
+        },
         "speakers": [],
         "dictionary": [],
+        "annotations": [],
         "segments": [],
     }
 
@@ -596,6 +612,8 @@ def normalise(doc: dict) -> dict:
 
     doc.setdefault("speakers", [])
     doc.setdefault("dictionary", [])
+    if not isinstance(doc.get("annotations"), list):
+        doc["annotations"] = []
     migrate_speakers(doc)
 
     segments.sort(key=lambda s: (float(s.get("start") or 0.0), float(s.get("end") or 0.0)))

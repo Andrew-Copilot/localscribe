@@ -45,8 +45,21 @@ def test_versioned_export_and_restore():
         slug = project["slug"]
         doc = projects.add_document(slug, "synthetic.wav", data=b"synthetic audio")
         doc_dir = projects.document_dir(slug, doc["id"])
-        projects.write_json(doc_dir / projects.TRANSCRIPT_FILE, {"text": "synthetic transcript"})
-        projects.update_document(slug, doc["id"], engine={"name": "synthetic-engine"})
+        projects.write_json(doc_dir / projects.TRANSCRIPT_FILE, {
+            "text": "synthetic transcript",
+            "engine": {"initial_prompt": "secret-profile-term"},
+        })
+        projects.update_document(
+            slug, doc["id"],
+            engine={"name": "synthetic-engine", "initial_prompt": "secret-profile-term"},
+            provenance={
+                "vocabulary_profile": {
+                    "id": "synthetic-profile", "name": "Synthetic preset",
+                    "target": "initial_prompt", "settings": {"language": "en"},
+                },
+                "transcription_settings": {"language": "en"},
+            },
+        )
         (doc_dir / "waveform.json").write_text("synthetic cache")
         (projects.project_dir(slug) / "logs").mkdir()
         (projects.project_dir(slug) / "logs" / "debug.log").write_text("synthetic log")
@@ -65,6 +78,15 @@ def test_versioned_export_and_restore():
                   and manifest["data_sensitivity"] == "may_contain_phi")
             check("transcription provenance",
                   manifest["transcription_provenance"][0]["engine"]["name"] == "synthetic-engine")
+            check("profile and settings provenance is exported without terms",
+                  manifest["transcription_provenance"][0]["provenance"]
+                  ["vocabulary_profile"]["id"] == "synthetic-profile"
+                  and b"secret-profile-term" not in b"".join(
+                      archive.read(name) for name in names
+                  ))
+            check("legacy engine vocab is redacted from archive metadata",
+                  manifest["transcription_provenance"][0]["engine"]["initial_prompt"]
+                  == "[omitted]")
             check("transcript-only excludes media", not any(name.startswith("media/") for name in names))
             check("transcript-only excludes preview", not any(name.endswith("preview.m4a") for name in names))
             check("transcript remains", any(name.endswith("transcript.json") for name in names))
@@ -85,6 +107,12 @@ def test_versioned_export_and_restore():
               imported["project_id"] == project["project_id"]
               and imported["data_sensitivity"] == "may_contain_phi")
         check("restore reports verified integrity", imported["archive_integrity_verified"])
+        check("transcript-only import records missing media",
+              imported["archive_includes_media"] is False
+              and imported["missing_media_documents"] == [doc["id"]]
+              and imported["archive_import"]["integrity_verified"])
+        check("document listing identifies missing source media",
+              projects.list_documents(imported["slug"])[0]["media_missing"])
         check("restore retains transcript",
               (projects.document_dir(imported["slug"], doc["id"]) / projects.TRANSCRIPT_FILE).exists())
 
@@ -160,11 +188,29 @@ def test_legacy_archive_and_unsafe_paths():
               not (config.PATHS.projects / "unsafe-study").exists())
 
 
+def test_golden_version_one_archive():
+    fixture = Path(__file__).parent / "fixtures" / "project-v1.lsproj"
+    with project_root():
+        manifest = projects.inspect_archive(fixture)
+        check("golden v1 archive stays inspectable", manifest["format_version"] == 1)
+        imported = projects.import_project(fixture)
+        documents = projects.list_documents(imported["slug"])
+        check("golden v1 import remains unverifiable",
+              not imported["archive_integrity_verified"]
+              and imported["archive_format_version"] == 1)
+        check("golden v1 transcript and missing-media state survive",
+              len(documents) == 1
+              and documents[0]["has_transcript"]
+              and documents[0]["media_missing"]
+              and imported["missing_media_documents"] == ["legacy-doc"])
+
+
 def main() -> int:
     tests = [
         test_versioned_export_and_restore,
         test_tampering_is_rejected_before_replace,
         test_legacy_archive_and_unsafe_paths,
+        test_golden_version_one_archive,
     ]
     for test in tests:
         print(f"\n{test.__name__}")

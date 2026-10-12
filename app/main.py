@@ -13,6 +13,7 @@ local Python services that may be running alongside it:
 from __future__ import annotations
 
 import asyncio
+import csv
 import io
 import json
 import os
@@ -31,13 +32,18 @@ from . import (
     box_sync,
     catalog,
     diagnostics,
+    deidentification,
     exporters,
     health,
+    handoff,
     media,
     proofread,
     projects,
+    ranged,
     review,
     update_check,
+    validation,
+    vocabulary,
     winlibs,
 )
 from .config import (
@@ -228,6 +234,7 @@ async def page_project(request: Request, slug: str):
         project = projects.load_project(slug)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    profiles = vocabulary.list_profiles()
     return templates.TemplateResponse(
         request,
         "project.html",
@@ -244,6 +251,11 @@ async def page_project(request: Request, slug: str):
                 if activity.category(event.get("action")) == "recovery"
             ],
             box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
+            vocabulary_profiles=profiles,
+            vocabulary_profile_available=any(
+                item["id"] == project.get("vocabulary_profile_id")
+                for item in profiles
+            ),
             accepted=sorted(media.MEDIA_EXTENSIONS),
         ),
     )
@@ -271,6 +283,7 @@ async def page_document(request: Request, slug: str, doc_id: str):
             outputs=projects.list_outputs(slug, doc_id),
             revisions=projects.list_revisions(slug, doc_id),
             speakers=speaker_roster(doc) if doc else [],
+            workflow=validation.snapshot(doc),
             palette=list(PALETTE),
             pause_gap=float(SETTINGS.get("paragraph_gap") or 1.5),
             proofreading={
@@ -714,6 +727,9 @@ async def api_create_project(request: Request):
     title = (payload.get("title") or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="A project title is required.")
+    profile_id = payload.get("vocabulary_profile_id")
+    if profile_id and not vocabulary.get_profile(str(profile_id)):
+        raise HTTPException(status_code=400, detail="The selected vocabulary profile was not found.")
     # `title` is passed positionally, so it must not also arrive as a keyword.
     try:
         record = projects.create_project(title, **{
@@ -742,6 +758,9 @@ async def api_project(slug: str):
 @app.put("/api/projects/{slug}")
 async def api_update_project(slug: str, request: Request):
     payload = await request.json()
+    profile_id = payload.get("vocabulary_profile_id")
+    if profile_id and not vocabulary.get_profile(str(profile_id)):
+        raise HTTPException(status_code=400, detail="The selected vocabulary profile was not found.")
     try:
         record = projects.save_project(slug, payload)
     except projects.ProjectValidationError as exc:
@@ -750,6 +769,101 @@ async def api_update_project(slug: str, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     CONSOLE.info(f"Saved metadata for '{record['title']}'", slug=slug)
     return {"project": record}
+
+
+@app.get("/api/vocabulary-profiles")
+async def api_vocabulary_profiles():
+    return {"profiles": vocabulary.list_profiles()}
+
+
+@app.post("/api/vocabulary-profiles")
+async def api_create_vocabulary_profile(request: Request):
+    payload = await request.json()
+    try:
+        profile = vocabulary.create_profile(
+            payload.get("name"),
+            payload.get("terms"),
+            target=payload.get("target", "initial_prompt"),
+            settings=payload.get("settings"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"profile": profile}
+
+
+@app.post("/api/vocabulary-profiles/import")
+async def api_import_vocabulary_profile(
+    file: UploadFile,
+    name: str = Form(""),
+    target: str = Form("initial_prompt"),
+):
+    filename = file.filename or ""
+    try:
+        profile = vocabulary.import_profile(
+            name or Path(filename).stem,
+            filename,
+            await file.read(vocabulary.MAX_PROFILE_BYTES + 1),
+            target=target,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"profile": profile}
+
+
+@app.delete("/api/vocabulary-profiles/{profile_id}")
+async def api_delete_vocabulary_profile(profile_id: str):
+    assigned = [
+        project["slug"] for project in projects.list_projects()
+        if project.get("vocabulary_profile_id") == profile_id
+    ]
+    if assigned:
+        raise HTTPException(
+            status_code=409,
+            detail="Unassign this profile from every project before deleting it.",
+        )
+    if not vocabulary.delete_profile(profile_id):
+        raise HTTPException(status_code=404, detail="Vocabulary profile was not found.")
+    return {"deleted": True}
+
+
+@app.get("/api/projects/{slug}/uncertain-terms.csv")
+async def api_uncertain_terms_report(slug: str):
+    try:
+        projects.load_project(slug)
+        documents = projects.list_documents(slug)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["term", "confidence", "file", "start_seconds"])
+    for record in documents:
+        doc = projects.load_transcript(slug, record["id"])
+        if not isinstance(doc, dict):
+            continue
+        for segment in doc.get("segments") or []:
+            if not isinstance(segment, dict):
+                continue
+            for word in segment.get("words") or []:
+                if not isinstance(word, dict):
+                    continue
+                try:
+                    confidence = float(word.get("prob", 1.0))
+                except (TypeError, ValueError):
+                    confidence = 1.0
+                term = str(word.get("w") or "").strip()
+                if not term or confidence >= LOW_CONFIDENCE:
+                    continue
+                writer.writerow([
+                    term, f"{confidence:.4f}", record.get("filename") or "",
+                    word.get("start", segment.get("start", "")),
+                ])
+    filename = f"{projects.slugify(slug)}-uncertain-terms.csv"
+    return Response(
+        output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.delete("/api/projects/{slug}")
@@ -1132,6 +1246,42 @@ async def api_import_project(
 # Transcript editing
 # ---------------------------------------------------------------------------
 
+def _export_outputs(slug: str, doc_id: str, doc: dict, record: dict, project: dict) -> dict:
+    settings = SETTINGS.all()
+    generated = projects._now()
+    formats = [
+        fmt for fmt in (settings.get("formats") or exporters.ALL_FORMATS)
+        if fmt in exporters.WRITERS
+    ]
+    meta = {
+        "title": Path(record.get("filename") or "transcript").stem,
+        "filename": record.get("filename"),
+        "project": project.get("title"),
+        "principal_investigator": project.get("principal_investigator"),
+        "irb_protocol": project.get("irb_protocol"),
+        "generated": generated,
+        "export_provenance": validation.provenance(doc, generated, formats),
+    }
+    out_dir = projects.outputs_dir(slug, doc_id)
+    written = exporters.export_all(doc, out_dir, settings, meta)
+    successful = [
+        fmt for fmt, result in written.items()
+        if not str(result).startswith("error")
+    ]
+    if successful:
+        validation.record_export(doc, generated, successful)
+        projects.save_transcript(slug, doc_id, doc, revision=False)
+    if "json" in successful:
+        meta["export_provenance"] = validation.provenance(
+            doc, generated, successful,
+        )
+        try:
+            exporters.write_json(doc, out_dir / "transcript.json", settings, meta)
+        except Exception as exc:
+            written["json"] = f"error: {exc}"
+    return written
+
+
 def _load_doc_or_404(slug: str, doc_id: str) -> dict:
     doc = projects.load_transcript(slug, doc_id)
     if doc is None:
@@ -1158,6 +1308,7 @@ async def api_save_transcript(slug: str, doc_id: str, request: Request):
     payload = await request.json()
     edits = payload.get("edits") or []
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
 
     apply_edits(doc, edits)
     keep = int(SETTINGS.get("autosave_revisions") or 20)
@@ -1186,6 +1337,7 @@ async def api_save_speakers(slug: str, doc_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Expected a 'speakers' list.")
 
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     report = set_roster(doc, roster)
     projects.save_transcript(
         slug, doc_id, doc, revision=False,
@@ -1217,6 +1369,7 @@ async def api_assign_speaker(slug: str, doc_id: str, request: Request):
     speaker_id = str(payload.get("speaker_id") or "")
 
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     try:
         changed = assign_speaker(doc, segment_ids, speaker_id)
     except ValueError as exc:
@@ -1243,6 +1396,7 @@ async def api_review_action(slug: str, doc_id: str, request: Request):
     """Persist a queue resolution or a manual segment flag in the transcript."""
     payload = await request.json()
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     try:
         state = review.apply_action(
             doc,
@@ -1257,6 +1411,213 @@ async def api_review_action(slug: str, doc_id: str, request: Request):
         keep=int(SETTINGS.get("autosave_revisions") or 20),
     )
     return {"review": state, "updated": doc.get("updated")}
+
+
+@app.get("/api/projects/{slug}/documents/{doc_id}/deidentification")
+async def api_deidentification_report(slug: str, doc_id: str):
+    _load_doc_or_404(slug, doc_id)
+    return deidentification.get_report(slug, doc_id)
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/deidentification/scan")
+async def api_deidentification_scan(slug: str, doc_id: str, request: Request):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected scan options.")
+    doc = _load_doc_or_404(slug, doc_id)
+    try:
+        return deidentification.scan(
+            slug, doc_id, doc,
+            flags=payload.get("flags"),
+            custom_patterns=payload.get("custom_patterns"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/deidentification/{action}")
+async def api_deidentification_action(
+    slug: str, doc_id: str, action: str, request: Request,
+):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected a review item.")
+    doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
+    item_id = str(payload.get("item_id") or "")
+    try:
+        if action == "skip":
+            return deidentification.skip(slug, doc_id, item_id)
+        if action == "replace":
+            doc, report = deidentification.replace(slug, doc_id, doc, item_id)
+        elif action == "undo":
+            doc, report = deidentification.undo(slug, doc_id, doc, item_id)
+        else:
+            raise HTTPException(status_code=404, detail="Unknown de-identification action.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    projects.save_transcript(
+        slug, doc_id, doc, revision=True,
+        keep=int(SETTINGS.get("autosave_revisions") or 20),
+    )
+    return {"transcript": doc, **report}
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/annotations")
+async def api_add_annotation(slug: str, doc_id: str, request: Request):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected an annotation object.")
+    doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
+    try:
+        annotations = handoff.clean_annotations([{
+            "id": uuid4().hex,
+            "kind": payload.get("kind"),
+            "text": payload.get("text"),
+            "at": payload.get("at"),
+            "segment_id": payload.get("segment_id"),
+            "author": payload.get("author"),
+            "created_at": projects._now(),
+        }], doc.get("duration"))
+    except handoff.HandoffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    annotation = annotations[0]
+    doc["annotations"] = handoff.merge_annotations(
+        doc.get("annotations") or [], [annotation], duration=doc.get("duration")
+    )
+    projects.save_transcript(
+        slug, doc_id, doc, revision=False,
+        keep=int(SETTINGS.get("autosave_revisions") or 20),
+    )
+    return {"annotation": annotation, "annotations": doc["annotations"]}
+
+
+@app.delete("/api/projects/{slug}/documents/{doc_id}/annotations/{annotation_id}")
+async def api_delete_annotation(slug: str, doc_id: str, annotation_id: str):
+    doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
+    annotations = doc.get("annotations") or []
+    kept = [item for item in annotations if str(item.get("id")) != annotation_id]
+    if len(kept) == len(annotations):
+        raise HTTPException(status_code=404, detail="That annotation was not found.")
+    doc["annotations"] = kept
+    projects.save_transcript(
+        slug, doc_id, doc, revision=False,
+        keep=int(SETTINGS.get("autosave_revisions") or 20),
+    )
+    return {"annotations": kept}
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/handoff/export")
+async def api_export_handoff(slug: str, doc_id: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected handoff options.")
+    if not isinstance(payload.get("include_media", False), bool):
+        raise HTTPException(status_code=400, detail="'include_media' must be a boolean.")
+    try:
+        package = handoff.create_package(
+            slug, doc_id, PATHS.logs,
+            include_media=payload.get("include_media", False),
+            instructions=payload.get("instructions", ""),
+        )
+    except handoff.HandoffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(package, filename=package.name, media_type="application/zip")
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/handoff/import")
+async def api_import_handoff(slug: str, doc_id: str, file: UploadFile):
+    _require_reopened(_load_doc_or_404(slug, doc_id))
+    staging = PATHS.logs / f"handoff-{os.getpid()}-{uuid4().hex}{handoff.PACKAGE_SUFFIX}"
+    try:
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        size = 0
+        with staging.open("xb") as output:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > handoff.MAX_PACKAGE_BYTES:
+                    raise HTTPException(status_code=413, detail="Review package is larger than 4 GiB.")
+                output.write(chunk)
+        result = handoff.import_package(staging, slug, doc_id)
+    except HTTPException:
+        raise
+    except handoff.HandoffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        staging.unlink(missing_ok=True)
+    return {
+        **result,
+        "conflicts": handoff.list_conflicts(slug, doc_id),
+        "annotations": (projects.load_transcript(slug, doc_id) or {}).get("annotations", []),
+    }
+
+
+@app.get("/api/projects/{slug}/documents/{doc_id}/handoff/conflicts")
+async def api_handoff_conflicts(slug: str, doc_id: str):
+    _load_doc_or_404(slug, doc_id)
+    return {"conflicts": handoff.list_conflicts(slug, doc_id)}
+
+
+@app.get("/api/projects/{slug}/documents/{doc_id}/handoff/conflicts/{conflict_id}/{version}")
+async def api_handoff_conflict_version(slug: str, doc_id: str, conflict_id: str, version: str):
+    try:
+        path = handoff.conflict_file(slug, doc_id, conflict_id, version)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, filename=f"{version}-transcript.json", media_type="application/json")
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/handoff/conflicts/{conflict_id}/resolve")
+async def api_resolve_handoff_conflict(slug: str, doc_id: str, conflict_id: str, request: Request):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected a conflict resolution choice.")
+    choice = str(payload.get("choice") or "")
+    if choice == "incoming":
+        _require_reopened(_load_doc_or_404(slug, doc_id))
+    try:
+        record = handoff.resolve_conflict(
+            slug, doc_id, conflict_id, choice
+        )
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"conflict": record}
+
+
+def _require_reopened(doc: dict) -> None:
+    try:
+        validation.require_reopened(doc)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/validation")
+async def api_validation_action(slug: str, doc_id: str, request: Request):
+    payload = await request.json()
+    doc = _load_doc_or_404(slug, doc_id)
+    try:
+        state = validation.transition(
+            doc,
+            str(payload.get("action") or ""),
+            str(payload.get("reviewer") or ""),
+            str(payload.get("notes") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    projects.save_transcript(
+        slug, doc_id, doc, revision=False,
+        keep=int(SETTINGS.get("autosave_revisions") or 20),
+    )
+    return {"validation": state, "updated": doc.get("updated")}
 
 
 @app.post("/api/projects/{slug}/documents/{doc_id}/proofread")
@@ -1282,8 +1643,10 @@ async def api_proofread(slug: str, doc_id: str, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     doc = projects.load_transcript(slug, doc_id) or {}
+    profile = vocabulary.get_profile(project.get("vocabulary_profile_id"))
     extra = proofread.extra_words(
         project.get("glossary"),
+        (profile or {}).get("terms"),
         settings.get("initial_prompt"),
         settings.get("hotwords"),
         doc.get("dictionary"),
@@ -1330,6 +1693,7 @@ async def api_add_to_dictionary(slug: str, doc_id: str, request: Request):
         CONSOLE.info(f"Added '{word}' to the project glossary.", project=slug)
     else:
         doc = _load_doc_or_404(slug, doc_id)
+        _require_reopened(doc)
         accepted = doc.setdefault("dictionary", [])
         if word not in accepted:
             accepted.append(word)
@@ -1347,6 +1711,7 @@ async def api_add_to_dictionary(slug: str, doc_id: str, request: Request):
 @app.post("/api/projects/{slug}/documents/{doc_id}/retimestamp")
 async def api_retimestamp(slug: str, doc_id: str):
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     record = projects.load_document(slug, doc_id)
     project = projects.load_project(slug)
 
@@ -1365,17 +1730,7 @@ async def api_retimestamp(slug: str, doc_id: str):
     keep = int(SETTINGS.get("autosave_revisions") or 20)
     projects.save_transcript(slug, doc_id, doc, revision=True, keep=keep)
 
-    written = exporters.export_all(
-        doc, projects.outputs_dir(slug, doc_id), SETTINGS.all(),
-        {
-            "title": Path(record.get("filename") or "transcript").stem,
-            "filename": record.get("filename"),
-            "project": project.get("title"),
-            "principal_investigator": project.get("principal_investigator"),
-            "irb_protocol": project.get("irb_protocol"),
-            "generated": projects._now(),
-        },
-    )
+    written = _export_outputs(slug, doc_id, doc, record, project)
     ok = [f for f, v in written.items() if not str(v).startswith("error")]
     CONSOLE.success(
         f"Regenerated {len(ok)} output file(s) including captions: "
@@ -1388,6 +1743,7 @@ async def api_retimestamp(slug: str, doc_id: str):
         "transcript": doc,
         "summary": summary(doc),
         "outputs": projects.list_outputs(slug, doc_id),
+        "workflow": validation.snapshot(doc),
     }
 
 
@@ -1396,6 +1752,7 @@ async def api_split(slug: str, doc_id: str, seg_id: int, request: Request):
     payload = await request.json()
     word_index = int(payload.get("word_index") or 0)
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     split_segment(doc, seg_id, word_index)
     projects.save_transcript(slug, doc_id, doc, keep=int(SETTINGS.get("autosave_revisions") or 20))
     CONSOLE.info(f"Split segment #{seg_id + 1}", document=doc_id)
@@ -1405,6 +1762,7 @@ async def api_split(slug: str, doc_id: str, seg_id: int, request: Request):
 @app.post("/api/projects/{slug}/documents/{doc_id}/segment/{seg_id}/merge")
 async def api_merge(slug: str, doc_id: str, seg_id: int):
     doc = _load_doc_or_404(slug, doc_id)
+    _require_reopened(doc)
     merge_segment(doc, seg_id)
     projects.save_transcript(slug, doc_id, doc, keep=int(SETTINGS.get("autosave_revisions") or 20))
     CONSOLE.info(f"Merged segment #{seg_id + 1} with the next one", document=doc_id)
@@ -1416,20 +1774,14 @@ async def api_reexport(slug: str, doc_id: str):
     doc = _load_doc_or_404(slug, doc_id)
     record = projects.load_document(slug, doc_id)
     project = projects.load_project(slug)
-    written = exporters.export_all(
-        doc, projects.outputs_dir(slug, doc_id), SETTINGS.all(),
-        {
-            "title": Path(record.get("filename") or "transcript").stem,
-            "filename": record.get("filename"),
-            "project": project.get("title"),
-            "principal_investigator": project.get("principal_investigator"),
-            "irb_protocol": project.get("irb_protocol"),
-            "generated": projects._now(),
-        },
-    )
+    written = _export_outputs(slug, doc_id, doc, record, project)
     ok = [f for f, v in written.items() if not str(v).startswith("error")]
     CONSOLE.success(f"Re-exported {len(ok)} file(s): {', '.join('.' + f for f in ok)}")
-    return {"written": written, "outputs": projects.list_outputs(slug, doc_id)}
+    return {
+        "written": written,
+        "outputs": projects.list_outputs(slug, doc_id),
+        "workflow": validation.snapshot(doc),
+    }
 
 
 @app.get("/api/projects/{slug}/documents/{doc_id}/revisions")
@@ -1439,10 +1791,15 @@ async def api_revisions(slug: str, doc_id: str):
 
 @app.post("/api/projects/{slug}/documents/{doc_id}/revisions/{revision_id}/restore")
 async def api_restore_revision(slug: str, doc_id: str, revision_id: str):
+    current = _load_doc_or_404(slug, doc_id)
+    _require_reopened(current)
     previous = projects.load_revision(slug, doc_id, revision_id)
     if previous is None:
         raise HTTPException(status_code=404, detail="That revision no longer exists.")
+    previous["validation"] = current.get("validation")
+    previous["export"] = current.get("export")
     normalise(previous)
+    validation.record_restore(previous, revision_id)
     projects.save_transcript(slug, doc_id, previous, keep=int(SETTINGS.get("autosave_revisions") or 20))
     CONSOLE.warn(f"Restored transcript revision {revision_id}", document=doc_id)
     return {"transcript": previous, "summary": summary(previous)}
@@ -1489,47 +1846,7 @@ def _ranged_file(path: Path, media_type: str, request: Request) -> Response:
     clicking a word near the end of a two-hour interview would download the
     whole file first.
     """
-    size = path.stat().st_size
-    range_header = request.headers.get("range")
-
-    if not range_header or not range_header.startswith("bytes="):
-        return FileResponse(path, media_type=media_type, headers={
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "no-store",
-        })
-
-    spec = range_header.split("=", 1)[1].split(",")[0].strip()
-    start_text, _, end_text = spec.partition("-")
-    try:
-        start = int(start_text) if start_text else 0
-        end = int(end_text) if end_text else size - 1
-    except ValueError:
-        start, end = 0, size - 1
-
-    start = max(0, min(start, size - 1))
-    end = max(start, min(end, size - 1))
-    length = end - start + 1
-
-    def iterator():
-        with open(path, "rb") as handle:
-            handle.seek(start)
-            remaining = length
-            while remaining > 0:
-                chunk = handle.read(min(256 * 1024, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield chunk
-
-    return StreamingResponse(
-        iterator(), status_code=206, media_type=media_type,
-        headers={
-            "Content-Range": f"bytes {start}-{end}/{size}",
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(length),
-            "Cache-Control": "no-store",
-        },
-    )
+    return ranged.ranged_file(path, media_type, request.headers.get("range"))
 
 
 @app.get("/api/projects/{slug}/documents/{doc_id}/waveform")

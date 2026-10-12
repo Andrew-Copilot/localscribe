@@ -24,9 +24,17 @@
   </div>
 </div>
 
+<ol class="workflow-stages" aria-label="Transcript workflow">
+  {% for stage in workflow.stages %}
+  <li class="{{ 'active' if stage.active else '' }}"
+      {% if stage.active %}aria-current="step"{% endif %}>{{ stage.label }}</li>
+  {% endfor %}
+</ol>
+
 {% if not has_transcript %}
   <div class="empty">
     <h3>Not transcribed yet</h3>
+    <p class="badge">{{ workflow.label }}</p>
     <p>
       {{ document.status_detail or 'This recording has not been transcribed.' }}
     </p>
@@ -43,9 +51,14 @@
 
       <div class="player-row" style="margin-top:.5rem">
         <div class="transport">
-          <button type="button" class="btn btn-small" id="btn-play">Play</button>
-          <button type="button" class="btn btn-small btn-quiet" id="btn-back">&minus;2s</button>
-          <button type="button" class="btn btn-small btn-quiet" id="btn-fwd">+2s</button>
+          <button type="button" class="btn btn-small" id="btn-play"
+                  aria-label="Play audio">Play</button>
+          <button type="button" class="btn btn-small btn-quiet" id="btn-back"
+                  aria-label="Back 2 seconds">&minus;2s</button>
+          <button type="button" class="btn btn-small btn-quiet" id="btn-fwd"
+                  aria-label="Forward 2 seconds">+2s</button>
+          <button type="button" class="btn btn-small btn-quiet" id="btn-replay"
+                  aria-label="Replay the current segment">Replay segment</button>
           <label class="chk" title="Loop the segment you are editing">
             <input type="checkbox" id="loop-seg"> Loop segment
           </label>
@@ -55,7 +68,7 @@
         </div>
         <div class="spacer"></div>
         <label class="small muted" for="rate">Speed</label>
-        <select id="rate" style="width:auto">
+        <select id="rate" style="width:auto" aria-label="Playback speed">
           <option value="0.5">0.5x</option>
           <option value="0.75">0.75x</option>
           <option value="1" selected>1x</option>
@@ -63,20 +76,47 @@
           <option value="1.5">1.5x</option>
           <option value="2">2x</option>
         </select>
+        <label class="small muted" for="pre-roll">Pre-roll</label>
+        <select id="pre-roll" class="roll-select" aria-label="Playback pre-roll">
+          <option value="0">0s</option><option value="0.5">0.5s</option>
+          <option value="1" selected>1s</option><option value="2">2s</option>
+          <option value="3">3s</option>
+        </select>
+        <label class="small muted" for="post-roll">Post-roll</label>
+        <select id="post-roll" class="roll-select" aria-label="Playback post-roll">
+          <option value="0">0s</option><option value="0.5">0.5s</option>
+          <option value="1" selected>1s</option><option value="2">2s</option>
+          <option value="3">3s</option>
+        </select>
         <span class="time-readout" id="time-readout">00:00 / 00:00</span>
       </div>
 
+      <div class="ribbon-tools" role="group" aria-label="Waveform zoom">
+        <span class="small muted">Waveform zoom</span>
+        <button type="button" class="btn btn-small btn-quiet" id="zoom-out"
+                aria-label="Zoom waveform out" title="Zoom out (−)">−</button>
+        <button type="button" class="btn btn-small btn-quiet" id="zoom-in"
+                aria-label="Zoom waveform in" title="Zoom in (+)">+</button>
+        <button type="button" class="btn btn-small btn-quiet" id="zoom-fit"
+                aria-label="Show full waveform">Fit</button>
+        <span class="small muted" id="zoom-level" aria-live="polite">Full recording</span>
+      </div>
       <div class="ribbon-wrap">
-        <canvas class="ribbon" id="ribbon" height="72"></canvas>
+        <canvas class="ribbon" id="ribbon" height="72" tabindex="0" role="slider"
+                aria-label="Waveform playback position" aria-valuemin="0"
+                aria-valuemax="{{ document.duration or 0 }}" aria-valuenow="0"
+                aria-valuetext="00:00"></canvas>
       </div>
       <p class="ribbon-hint">
-        Click anywhere on the ribbon to play from that point. Click any word in
-        the transcript to hear it again. Hold the pointer over a word to see
-        how many other times it appears. Double-click a word to find and
-        replace it everywhere.
+        Click or focus the waveform and use the arrow keys to seek. Click a
+        word to replay it with the selected pre/post-roll. Hold the pointer
+        over a word to see how many other times it appears. Double-click a
+        word to find and replace it everywhere.
         <kbd>Space</kbd> play/pause &middot;
         <kbd>&larr;</kbd><kbd>&rarr;</kbd> 2s &middot;
         <kbd>Shift</kbd>+<kbd>&larr;</kbd><kbd>&rarr;</kbd> 5s &middot;
+        <kbd>R</kbd> replay segment &middot; <kbd>L</kbd> loop segment &middot;
+        <kbd>+</kbd>/<kbd>−</kbd> zoom &middot; <kbd>Home</kbd>/<kbd>End</kbd> start/end &middot;
         <kbd>Esc</kbd> leave the text field
       </p>
     </div>
@@ -176,6 +216,81 @@
         <ol class="review-items" id="review-items"></ol>
       </section>
 
+      <section class="card" id="deidentification-review" aria-labelledby="deidentification-title">
+        <h3 id="deidentification-title">De-identification review assistance</h3>
+        <p class="notice notice-warn">
+          Assistive flags only: findings can be missed or incorrect. Review the
+          transcript and every replacement yourself. This is not anonymization,
+          a compliance guarantee, or a substitute for an approved privacy review.
+        </p>
+        <p class="small muted">
+          The findings report and reversible replacement map stay in this local
+          project and are excluded from shareable project and review exports.
+        </p>
+        <div class="review-filters" aria-label="Identifier types to flag">
+          <label class="chk"><input type="checkbox" data-deid-flag="email" checked> Email</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="phone" checked> Phone</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="ssn" checked> Possible SSN</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="date" checked> Dates</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="ip_address" checked> IP address</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="address" checked> Possible street address</label>
+          <label class="chk"><input type="checkbox" data-deid-flag="url" checked> Web address</label>
+        </div>
+        <div class="field">
+          <label for="deid-custom-patterns">Additional custom patterns (one per line: label: regex)</label>
+          <textarea id="deid-custom-patterns" rows="3"
+                    placeholder="Patient ID: \bPT-\d{6}\b"></textarea>
+        </div>
+        <div class="row">
+          <button type="button" class="btn btn-small btn-primary" id="deid-scan">
+            Scan for possible identifiers
+          </button>
+          <span class="small muted" id="deid-status" role="status" aria-live="polite"></span>
+        </div>
+        <div class="review-counts" id="deid-counts" aria-live="polite"></div>
+        <ol class="review-items" id="deid-items"></ol>
+      </section>
+
+      <section class="review-queue" id="annotations-panel" aria-labelledby="annotations-title">
+        <h3 id="annotations-title">Timestamped comments and questions</h3>
+        <p class="small muted">
+          Notes are saved with this transcript and travel in offline review packages.
+        </p>
+        <div class="field-row">
+          <div class="field">
+            <label for="annotation-time">Recording time (seconds)</label>
+            <input type="number" id="annotation-time" min="0" step="0.1" value="0">
+          </div>
+          <div class="field">
+            <label for="annotation-kind">Type</label>
+            <select id="annotation-kind">
+              <option value="comment">Comment</option>
+              <option value="question">Question</option>
+            </select>
+          </div>
+          <div class="field" style="align-self:end">
+            <button type="button" class="btn btn-small btn-quiet" id="annotation-use-playhead">
+              Use current playhead
+            </button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="annotation-text">Comment or question</label>
+          <textarea id="annotation-text" maxlength="4000" rows="2"></textarea>
+        </div>
+        <div class="row">
+          <label class="field grow" for="annotation-author">
+            <span>Author (optional)</span>
+            <input type="text" id="annotation-author" maxlength="200">
+          </label>
+          <button type="button" class="btn btn-small btn-primary" id="annotation-add">
+            Add note
+          </button>
+        </div>
+        <p class="small muted" id="annotations-empty" hidden>No annotations yet.</p>
+        <ol class="review-items" id="annotations-list"></ol>
+      </section>
+
       <div id="stale-warning" class="notice notice-warn" hidden>
         <strong>Timings are out of date</strong>
         <span id="stale-text"></span>
@@ -211,6 +326,89 @@
 
   <!-- Side panel -->
   <aside class="side-panel">
+    <section class="card validation-panel" id="validation-panel"
+             data-status="{{ workflow.status }}">
+      <h3>Validation sign-off</h3>
+      <p class="small muted">Status: <strong id="workflow-status">{{ workflow.label }}</strong></p>
+      <p class="small muted" id="export-provenance">
+        {% if workflow.export.exported_at %}
+          Latest export: {{ workflow.export.status }} · {{ workflow.export.exported_at }}
+          {% if workflow.export.formats %}· {{ workflow.export.formats|join(', ') }}{% endif %}
+        {% else %}
+          No export recorded yet.
+        {% endif %}
+      </p>
+      <p class="notice notice-warn small" id="validation-lock"
+         {% if workflow.status not in ('validated', 'exported') %}hidden{% endif %}>
+        Transcript changes are locked after sign-off. Reopen validation deliberately
+        before editing, re-timestamping, or restoring a revision.
+      </p>
+      {% if workflow.validated_at %}
+      <p class="small" id="validation-signoff">
+        Validated by {{ workflow.reviewer }} · {{ workflow.validated_at }}
+        {% if workflow.notes %}<br>{{ workflow.notes }}{% endif %}
+      </p>
+      {% else %}
+      <p class="small muted" id="validation-signoff">No validation sign-off recorded.</p>
+      {% endif %}
+      <label class="field">
+        <span>Reviewer</span>
+        <input type="text" id="validation-reviewer" maxlength="200"
+               value="{{ workflow.reviewer }}">
+      </label>
+      <label class="field">
+        <span>Notes / reason for reopening</span>
+        <textarea id="validation-notes" rows="3" maxlength="4000">{{ workflow.notes }}</textarea>
+      </label>
+      <div class="row">
+        <button type="button" class="btn btn-small" id="review-start"
+                {% if workflow.status != 'transcribed' %}hidden{% endif %}>Begin review</button>
+        <button type="button" class="btn btn-small btn-primary" id="validation-sign"
+                {% if workflow.status != 'in_review' %}hidden{% endif %}>Validate transcript</button>
+        <button type="button" class="btn btn-small btn-quiet" id="validation-reopen"
+                {% if workflow.status not in ('validated', 'exported') %}hidden{% endif %}>Reopen validation</button>
+      </div>
+      <details class="validation-history">
+        <summary>Validation and export history ({{ workflow.history|length }})</summary>
+        <ol id="validation-history">
+          {% for event in workflow.history|reverse %}
+          <li><strong>{{ event.action|replace('_', ' ')|title }}</strong>
+            · {{ event.reviewer or 'Reviewer not recorded' }} · {{ event.at }}
+            {% if event.notes %}<br>{{ event.notes }}{% endif %}
+            {% if event.formats %}<br>Formats: {{ event.formats|join(', ') }}{% endif %}
+          </li>
+          {% endfor %}
+        </ol>
+      </details>
+    </section>
+
+    <section class="card" id="offline-handoff">
+      <h3>Offline review handoff</h3>
+      <p class="small muted">
+        Export a portable package for one transcript, then import the returned
+        package here. Nothing synchronizes in real time.
+      </p>
+      <label class="chk">
+        <input type="checkbox" id="handoff-include-media">
+        Include original source media
+      </label>
+      <div class="field">
+        <label for="handoff-instructions">Instructions for the reviewer (optional)</label>
+        <textarea id="handoff-instructions" rows="3" maxlength="20000"></textarea>
+      </div>
+      <div class="row">
+        <button type="button" class="btn btn-small btn-primary" id="handoff-export">
+          Export review package
+        </button>
+        <button type="button" class="btn btn-small" id="handoff-import">
+          Import returned package
+        </button>
+        <input type="file" id="handoff-file" accept=".lsreview,.zip" hidden>
+      </div>
+      <p class="small muted" id="handoff-status" role="status" aria-live="polite"></p>
+      <div id="handoff-conflicts"></div>
+    </section>
+
     <div class="card">
       <h3>Finish the review</h3>
       <p class="small muted">
@@ -329,16 +527,21 @@
     filename: {{ document.filename|tojson }},
     lowConfidence: {{ low_confidence|tojson }},
     transcript: {{ transcript|tojson }},
+    workflow: {{ workflow|tojson }},
     speakers: {{ speakers|tojson }},
     palette: {{ palette|tojson }},
     pauseGap: {{ pause_gap|tojson }},
     proofreading: {{ proofreading|tojson }},
   };
 </script>
+<script src="/static/js/playback.js"></script>
 <script src="/static/js/editor.js"></script>
 <script src="/static/js/speakers.js"></script>
 <script src="/static/js/findreplace.js"></script>
 <script src="/static/js/proofread.js"></script>
 <script src="/static/js/review.js"></script>
+<script src="/static/js/deidentification.js"></script>
+<script src="/static/js/handoff.js"></script>
+<script src="/static/js/validation.js"></script>
 {% endif %}
 {% endblock %}

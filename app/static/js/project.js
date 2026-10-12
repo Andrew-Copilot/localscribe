@@ -40,7 +40,8 @@
     }
 
     documents.forEach((doc) => {
-      const [cls, label] = STATUS[doc.status] || ['badge', doc.status];
+      const [cls, normalLabel] = STATUS[doc.status] || ['badge', doc.status];
+      const label = doc.media_missing ? 'Source media missing' : normalLabel;
       const media = doc.media || {};
       const kind = media.has_video ? 'video' : 'audio';
       const codec = media.audio_codec ? ` / ${media.audio_codec}` : '';
@@ -62,13 +63,19 @@
         <td class="num mono">${doc.words ? doc.words.toLocaleString() : '-'}</td>
         <td>
           <span class="${cls}">${LS.escapeHtml(label)}</span>
-          <div class="small muted status-detail">${LS.escapeHtml(doc.status_detail || '')}</div>
+          <div class="small muted status-detail">${LS.escapeHtml(
+            doc.media_missing
+              ? 'This archive did not include the original recording.'
+              : (doc.status_detail || '')
+          )}</div>
         </td>
         <td class="nowrap" style="text-align:right">
           ${done
             ? `<a class="btn btn-small" href="/project/${encodeURIComponent(slug)}/document/${encodeURIComponent(doc.id)}">Review</a>`
             : ''}
-          ${ACTIVE.includes(doc.status)
+          ${doc.media_missing
+            ? '<span class="small muted">Add the source recording to transcribe</span>'
+            : ACTIVE.includes(doc.status)
             ? '<span class="small muted">working...</span>'
             : `<button type="button" class="btn btn-small btn-quiet" data-act="one" data-id="${doc.id}">${done ? 'Redo' : 'Transcribe'}</button>`}
           <button type="button" class="btn btn-small btn-quiet btn-danger" data-act="del" data-id="${doc.id}">Remove</button>
@@ -77,9 +84,11 @@
     });
 
     const pending = documents.filter(
-      (d) => !ACTIVE.includes(d.status) && d.status !== 'unusable' && d.status !== 'transcribed'
+      (d) => !d.media_missing && !ACTIVE.includes(d.status) &&
+        d.status !== 'unusable' && d.status !== 'transcribed'
     ).length;
     const busy = documents.some((d) => ACTIVE.includes(d.status));
+    const missingMedia = documents.some((d) => d.media_missing);
 
     if (docCount) docCount.textContent = documents.length;
     if (transcribeBtn) {
@@ -91,7 +100,7 @@
           : 'Transcribe');
       if (!busy && !pending && documents.length) {
         transcribeBtn.disabled = true;
-        transcribeBtn.textContent = 'All transcribed';
+        transcribeBtn.textContent = missingMedia ? 'Source media missing' : 'All transcribed';
       }
     }
   }
@@ -353,6 +362,149 @@
           metaState.className = 'save-state dirty';
         }
         LS.toast(`Could not save: ${err.message}`, 'error');
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  }
+
+  /* ----------------------------------------- reusable vocabulary profiles */
+
+  const profileSelect = document.getElementById('vocabulary-profile');
+  const profileState = document.getElementById('vocabulary-state');
+
+  function showProfileState(text, className = 'save-state') {
+    if (!profileState) return;
+    profileState.textContent = text;
+    profileState.className = className;
+  }
+
+  async function assignVocabularyProfile(profileId) {
+    await LS.put(`/api/projects/${encodeURIComponent(slug)}`, {
+      vocabulary_profile_id: profileId,
+    });
+    window.PROJECT.vocabularyProfileId = profileId;
+    showProfileState('Saved', 'save-state saved');
+    LS.toast(profileId ? 'Vocabulary profile assigned to this project.' : 'Profile removed.', 'ok');
+  }
+
+  const assignProfileBtn = document.getElementById('save-vocabulary-profile');
+  if (assignProfileBtn && profileSelect) {
+    assignProfileBtn.addEventListener('click', async () => {
+      assignProfileBtn.disabled = true;
+      showProfileState('Saving...');
+      try {
+        await assignVocabularyProfile(profileSelect.value);
+      } catch (err) {
+        showProfileState('Not saved', 'save-state dirty');
+        LS.toast(`Could not assign the profile: ${err.message}`, 'error');
+      } finally {
+        assignProfileBtn.disabled = false;
+      }
+    });
+  }
+
+  const deleteProfileBtn = document.getElementById('delete-vocabulary-profile');
+  if (deleteProfileBtn && profileSelect) {
+    deleteProfileBtn.addEventListener('click', async () => {
+      const profileId = profileSelect.value;
+      if (!profileId) {
+        LS.toast('Choose a profile to delete.', 'info');
+        return;
+      }
+      if (!confirm(
+        'Delete this reusable profile from the local library? Its terms will be ' +
+        'removed from this computer, but transcripts already created are unchanged.'
+      )) return;
+      deleteProfileBtn.disabled = true;
+      try {
+        await LS.del(`/api/vocabulary-profiles/${encodeURIComponent(profileId)}`);
+        await refreshVocabularyProfiles('');
+        showProfileState('Profile deleted', 'save-state saved');
+        LS.toast('Vocabulary profile deleted.', 'ok');
+      } catch (err) {
+        LS.toast(`Could not delete the profile: ${err.message}`, 'warn');
+      } finally {
+        deleteProfileBtn.disabled = false;
+      }
+    });
+  }
+
+  async function refreshVocabularyProfiles(selectedId) {
+    const result = await LS.get('/api/vocabulary-profiles');
+    const current = selectedId || (profileSelect && profileSelect.value) || '';
+    if (!profileSelect) return;
+    profileSelect.replaceChildren(new Option('No profile', ''));
+    (result.profiles || []).forEach((profile) => {
+      const option = new Option(
+        `${profile.name} · ${profile.term_count} terms`, profile.id
+      );
+      profileSelect.add(option);
+    });
+    profileSelect.value = current;
+  }
+
+  const profileCreateForm = document.getElementById('vocabulary-create-form');
+  if (profileCreateForm) {
+    profileCreateForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const settings = {};
+      const language = document.getElementById('vocabulary-language').value.trim();
+      const task = document.getElementById('vocabulary-task').value;
+      const beamSize = document.getElementById('vocabulary-beam-size').value;
+      const bestOf = document.getElementById('vocabulary-best-of').value;
+      const vad = document.getElementById('vocabulary-vad').value;
+      if (language) settings.language = language;
+      if (task) settings.task = task;
+      if (beamSize) settings.beam_size = Number(beamSize);
+      if (bestOf) settings.best_of = Number(bestOf);
+      if (vad) settings.vad_filter = vad === 'true';
+      if (document.getElementById('vocabulary-multilingual').checked) {
+        settings.multilingual = true;
+      }
+      const submit = profileCreateForm.querySelector('button[type=submit]');
+      submit.disabled = true;
+      try {
+        const result = await LS.post('/api/vocabulary-profiles', {
+          name: document.getElementById('vocabulary-name').value,
+          target: document.getElementById('vocabulary-target').value,
+          terms: document.getElementById('vocabulary-terms').value.split(/[\n,;]+/),
+          settings,
+        });
+        await refreshVocabularyProfiles(result.profile.id);
+        await assignVocabularyProfile(result.profile.id);
+        profileCreateForm.reset();
+        LS.toast(`Created reusable profile “${result.profile.name}”.`, 'ok');
+      } catch (err) {
+        showProfileState('Not saved', 'save-state dirty');
+        LS.toast(`Could not create the profile: ${err.message}`, 'error');
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  }
+
+  const profileImportForm = document.getElementById('vocabulary-import-form');
+  if (profileImportForm) {
+    profileImportForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const file = document.getElementById('vocabulary-file').files[0];
+      if (!file) return;
+      const body = new FormData();
+      body.append('file', file);
+      body.append('name', document.getElementById('vocabulary-import-name').value);
+      body.append('target', document.getElementById('vocabulary-import-target').value);
+      const submit = profileImportForm.querySelector('button[type=submit]');
+      submit.disabled = true;
+      try {
+        const result = await LS.post('/api/vocabulary-profiles/import', body);
+        await refreshVocabularyProfiles(result.profile.id);
+        await assignVocabularyProfile(result.profile.id);
+        profileImportForm.reset();
+        LS.toast(`Imported reusable profile “${result.profile.name}”.`, 'ok');
+      } catch (err) {
+        showProfileState('Not saved', 'save-state dirty');
+        LS.toast(`Could not import the profile: ${err.message}`, 'error');
       } finally {
         submit.disabled = false;
       }
