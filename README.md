@@ -234,6 +234,16 @@ without source media. Transient caches and logs are excluded. Older archives
 remain importable, but their contents cannot be checksum-verified; Local Scribe
 warns when one is imported.
 
+### Privacy Center
+
+Open **Privacy Center** in the top navigation to review Offline Lock, the
+explicitly configured local Box Sync backup folder, local storage locations,
+the last network-affecting action, and a bounded activity history for network
+and recovery actions. Diagnostics are generated as an on-screen preview and
+are not saved unless you inspect the preview and choose **Save diagnostics
+JSON**. The preview contains only reviewed runtime and settings status; it
+excludes media, transcript content, tokens, and user paths.
+
 ## Options
 
 ```
@@ -289,6 +299,7 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_sensitivity   # project declarations and future backup policy
 .venv/Scripts/python.exe -m tests.test_project_archives # archive integrity and legacy compatibility
 .venv/Scripts/python.exe -m tests.test_recovery       # local snapshots and recovery safeguards
+.venv/Scripts/python.exe -m tests.test_privacy_center # sanitized diagnostics and activity history
 .venv/Scripts/python.exe -m tests.test_box_sync       # local Box Sync copy safeguards
 .venv/Scripts/python.exe -m tests.test_speakers       # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts

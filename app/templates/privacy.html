@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Privacy Center - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div class="grow">
+    <h1>Privacy Center</h1>
+    <p class="lede">
+      Review network controls, backup configuration, local storage, and the
+      content-free activity record for this installation.
+    </p>
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <section class="card">
+    <h2>Offline Lock</h2>
+    {% if values.offline_lock %}
+      <p><span class="badge badge-ok">On</span> Outbound network access is blocked.</p>
+    {% else %}
+      <p><span class="badge badge-warn">Off</span> Model downloads and update checks may use the network.</p>
+    {% endif %}
+    <p class="small muted">
+      Offline Lock is enforced at the socket level. A deliberate Box Sync
+      backup also requires the lock to be off.
+    </p>
+    <a class="btn btn-small" href="/settings#privacy-settings">Manage privacy settings</a>
+  </section>
+
+  <section class="card">
+    <h2>Backup configuration</h2>
+    {% if values.box_sync_destination %}
+      <p><span class="badge badge-ok">Configured</span> Local Box Sync folder</p>
+      <p class="mono small" style="overflow-wrap:anywhere">{{ values.box_sync_destination }}</p>
+      <p class="small muted">
+        Backups only run after an explicit project-level action. Local Scribe
+        cannot verify that Box Sync is healthy or that this location is approved.
+      </p>
+    {% else %}
+      <p><span class="badge">Not configured</span></p>
+      <p class="small muted">No backup folder is selected automatically.</p>
+    {% endif %}
+    <a class="btn btn-small" href="/settings#privacy-settings">Configure backup</a>
+  </section>
+</div>
+
+<section class="card">
+  <h2>Storage location</h2>
+  <p class="small muted">
+    Project data, downloaded models, logs, and settings remain in these local
+    locations. Paths are shown here for your reference; they are not included
+    in the sanitized diagnostics preview below.
+  </p>
+  <dl>
+    <dt>Projects</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.projects }}</dd>
+    <dt>Models</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.models }}</dd>
+    <dt>Logs</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.logs }}</dd>
+    <dt>Settings</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.settings }}</dd>
+  </dl>
+</section>
+
+<section class="card">
+  <h2>Last remote action</h2>
+  {% if last_remote_action %}
+    <p>
+      <strong>{{ activity_labels.get(last_remote_action.action, 'Other activity') }}</strong>
+      &middot; {{ last_remote_action.outcome|replace('_', ' ') }}
+    </p>
+    <p class="small muted">{{ last_remote_action.timestamp }}</p>
+  {% else %}
+    <p class="muted">No recorded network-affecting action yet.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Activity history</h2>
+  <p class="small muted">
+    At most 200 recent network-affecting and recovery events are kept locally.
+    Project identifiers are represented by a one-way reference; titles,
+    filenames, transcript text, and paths are not recorded.
+  </p>
+  {% set shown = namespace(any=false) %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>When</th><th>Type</th><th>Action</th><th>Outcome</th></tr></thead>
+      <tbody>
+        {% for event in activities|reverse %}
+          {% if event.category in ('network', 'recovery') %}
+            {% set shown.any = true %}
+            <tr>
+              <td class="small nowrap">{{ event.timestamp }}</td>
+              <td>{{ event.category|title }}</td>
+              <td>{{ activity_labels.get(event.action, 'Other activity') }}</td>
+              <td>{{ event.outcome|replace('_', ' ') }}</td>
+            </tr>
+          {% endif %}
+        {% endfor %}
+        {% if not shown.any %}
+          <tr><td colspan="4" class="muted">No activity recorded yet.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card" id="diagnostics">
+  <h2>Sanitized diagnostics</h2>
+  <p>
+    The preview contains only app/runtime versions, privacy-setting states,
+    and basic engine status. It excludes recordings, media, transcript content,
+    tokens, project metadata, and user paths. Nothing is saved or sent
+    automatically.
+  </p>
+  <div class="row" style="margin:.8rem 0">
+    <button type="button" class="btn" id="preview-diagnostics">Generate preview</button>
+    <span id="diagnostics-status" class="small muted" role="status" aria-live="polite"></span>
+  </div>
+  <label for="diagnostics-preview">Inspect the diagnostics JSON before saving</label>
+  <textarea id="diagnostics-preview" class="mono" rows="14" readonly
+            spellcheck="false" placeholder="Generate a preview to inspect its contents."></textarea>
+  <label class="chk" style="margin:.7rem 0">
+    <input type="checkbox" id="diagnostics-inspected" disabled>
+    <span>I inspected this preview and want to save it to my computer.</span>
+  </label>
+  <button type="button" class="btn btn-primary" id="save-diagnostics" disabled>
+    Save diagnostics JSON
+  </button>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.ACTIVITY_LABELS = {{ activity_labels|tojson }};
+</script>
+<script src="/static/js/privacy.js"></script>
+{% endblock %}

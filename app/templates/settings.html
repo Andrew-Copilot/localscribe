@@ -213,7 +213,8 @@
 <!-- The settings form itself, generated from the schema -->
 <form id="settings-form">
   {% for group in schema %}
-  <details class="settings-group" {% if loop.index <= 2 %}open{% endif %}>
+  <details class="settings-group" id="{{ group.id }}-settings"
+           {% if loop.index <= 2 %}open{% endif %}>
     <summary>{{ group.title }}</summary>
     <div class="settings-body">
       <p class="settings-blurb">{{ group.blurb }}</p>
