@@ -230,6 +230,21 @@ A project is plain files, so you can inspect it, copy it to an encrypted
 drive, or recover a transcript with a text editor. **Export project** writes a
 single `.lsproj` archive; **Import project** reads one back.
 
+Exports are now **local v2 snapshots** with a versioned manifest, source-media
+sensitivity declaration, available model/settings provenance, and byte sizes
+and SHA-256 checksums for every artifact. Import verifies v2 snapshots before
+writing a project; older v1 exports still import but have no checksum assurance.
+Full snapshots include referenced source media and preview audio. Transcript-only
+snapshots (`include_media=False` in `projects.export_project`, or
+`include_media=false` on the existing export API) exclude both, retaining
+metadata, transcripts, revisions, and standard transcript outputs.
+Waveform caches, logs, PID files, environments, temporary files, and unrelated
+or credential files are not included. These archives are **not encrypted**:
+transcripts, metadata, provenance, and filenames can still be sensitive even
+without audio. Checksums detect corruption, not authenticity or compliance.
+There is no Box copying, remote backup UI, API, authentication, or credential
+storage in this phase. See the [snapshot format boundary](docs/box-sync-decision.md#r03-phase-1-local-snapshot-format).
+
 ## Options
 
 ```
@@ -283,6 +298,7 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_exporters     # captions and exports
 .venv/Scripts/python.exe -m tests.test_assets        # front-end asset guards
 .venv/Scripts/python.exe -m tests.test_sensitivity   # project declarations and future backup policy
+.venv/Scripts/python.exe -m tests.test_snapshots     # local snapshots, validation, legacy imports
 .venv/Scripts/python.exe -m tests.test_speakers      # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts
 .venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery
@@ -295,7 +311,7 @@ Projects have a user-declared source-media sensitivity, defaulting to
 **Unknown — treat as PHI**. This controls future backup safeguards, not whether
 data is PHI, and provides no compliance advice. See the
 [Box Sync decision and local guardrails](docs/box-sync-decision.md).
-This foundation does not implement backup.
+This foundation implements local snapshot export only, not backup transport.
 
 ## Versioning
 

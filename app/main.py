@@ -16,6 +16,7 @@ import asyncio
 import io
 import json
 import os
+import tempfile
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
@@ -802,7 +803,7 @@ async def api_export_project(slug: str, include_media: bool = True):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     CONSOLE.success(
         f"Exported project archive ({fmt_bytes(archive.stat().st_size)})",
-        file=archive.name, include_media=include_media,
+        include_media=include_media,
     )
     return FileResponse(
         archive, filename=archive.name, media_type="application/zip",
@@ -812,8 +813,8 @@ async def api_export_project(slug: str, include_media: bool = True):
 
 @app.post("/api/projects/import")
 async def api_import_project(file: UploadFile, mode: str = Form("rename")):
-    name = file.filename or "archive"
-    staging = PATHS.logs / f"import-{os.getpid()}-{name}"
+    with tempfile.NamedTemporaryFile(prefix="import-", suffix=".tmp", dir=PATHS.logs, delete=False) as tmp:
+        staging = Path(tmp.name)
     try:
         staging.write_bytes(await file.read())
         record = projects.import_project(staging, mode=mode)
@@ -823,9 +824,7 @@ async def api_import_project(file: UploadFile, mode: str = Form("rename")):
         staging.unlink(missing_ok=True)
 
     CONSOLE.success(
-        f"Imported project '{record['title']}' with "
-        f"{record['stats']['documents']} document(s)",
-        slug=record["slug"], source=name,
+        f"Imported project archive with {record['stats']['documents']} document(s)",
     )
     return {"project": record}
 

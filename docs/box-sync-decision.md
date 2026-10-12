@@ -1,7 +1,8 @@
 # Decision: local sensitivity guardrails and future Box Sync transport
 
-This implements the classification/guardrail foundation of [R02, issue #3](https://github.com/Andrew-Copilot/localscribe/issues/3)
-only. No backup transport or backup UI is implemented.
+This documents the classification/guardrail foundation of [R02, issue #3](https://github.com/Andrew-Copilot/localscribe/issues/3)
+and the local snapshot foundation of [R03, issue #4](https://github.com/Andrew-Copilot/localscribe/issues/4).
+No backup transport or backup UI is implemented.
 
 ## Decision and revised roadmap
 
@@ -50,7 +51,80 @@ must not exclude these artifacts or imply that derived data is automatically saf
 
 ## Out of scope
 
-Remote backups, local snapshots, Box Sync directory copying, Box APIs,
+Remote backups, Box Sync directory copying, Box APIs,
 authentication/credential storage, retention, deletion, remote versioning, and
 Box application registration are not part of this slice. Transcription behavior
 is unchanged. Tests use synthetic records only.
+
+## R03 Phase 1: local snapshot format
+
+The existing `.lsproj` ZIP container and `localscribe-manifest.json` name are
+retained. New exports use `format: localscribe-project`, `format_version: 2`.
+v1 archives remain importable without checksum assurance; the pure
+`app.snapshots.validate_snapshot` function deliberately rejects v1 rather than
+calling it verified. Future versions require an explicit reader/migration;
+unknown versions are rejected.
+
+### Manifest contract
+
+Required fields:
+
+- `format` and integer `format_version`: identifier and schema version.
+- `app_version`: Local Scribe version at snapshot creation.
+- `exported`: timezone-aware ISO-8601 creation timestamp.
+- `slug` and `title`: project identity (the current store uses a slug, not a UUID).
+- `data_sensitivity`: the project's normalized declaration; missing/invalid
+  legacy values become `unknown_treat_as_phi` without rewriting the source.
+- `includes_media`: boolean; full or transcript-only.
+- `documents`: unique entries sorted by document ID, with ID, filename, status,
+  and `provenance`. Provenance copies available document `engine`/`stats` and
+  transcript schema, model, actual engine/settings, stats, language, timestamps,
+  and human-edit/retimestamp state. Missing provenance stays empty; no current
+  global settings are substituted for historical settings.
+- `artifacts`: unique entries sorted by canonical archive path, each containing
+  `path`, nonnegative integer `size_bytes`, and lowercase SHA-256 `sha256`.
+
+JSON keys and inventories are sorted. Identical source data, app version, mode,
+and creation timestamp produce identical manifests; separate real snapshots
+have different creation times and unique filenames. ZIP timestamps/compression
+and archive filenames are not a reproducible-byte contract. The manifest does
+not checksum itself; every other archive member must be declared and checksummed.
+
+### Artifact boundary and safety
+
+Selection is an allowlist: `project.json`, document metadata and canonical
+transcripts, revision JSON, and standard `outputs/transcript.*` files
+(`txt`, `md`, `docx`, `vtt`, `srt`, `json`). Full mode additionally includes
+only source media referenced by document metadata and `preview.m4a`.
+Transcript-only mode excludes **both** source media and derived preview audio.
+Waveform caches, orphan media, arbitrary extras, application logs, PID files,
+Python environments, temporary files, and credential/secret files are outside
+the selection. Unsafe/missing referenced media and selected symlinks fail closed;
+transcript-only exports can still be made when source media is unavailable.
+This is not content redaction: do not place credentials inside legitimate
+project metadata, engine settings, or transcript text. No credential store is
+implemented or read.
+
+Validation reads only: it does not extract, mutate project state, log content,
+or contact any service. It checks schema/version, canonical relative paths,
+duplicates (including case collisions), special-file entries, declared files,
+byte sizes, and SHA-256. v2 rejects all unexpected archive members, including
+directory entries, instead of silently ignoring them. v1 may retain its directory
+entries and extras but must also pass archive path safety checks.
+v2 import validates the same open ZIP before replacement or extraction.
+
+Creation streams artifacts and hashes the bytes actually written. Metadata is
+read once for both archived bytes and provenance. In-process project writes are
+locked during export; external edits are not a transactional filesystem snapshot.
+A same-directory temporary ZIP is closed, flushed/fsynced, and validated before
+atomic rename to a unique `.lsproj`; failures remove the temporary file and do
+not replace earlier snapshots. Archive endpoint logs contain only generic
+operation/count/size information, not titles, source filenames, or classifications.
+This does not change logging in unrelated transcription operations.
+
+Snapshots are unencrypted sensitive-data containers, including transcript-only
+snapshots. Checksums provide corruption detection, not signatures, authenticity,
+PHI detection, institutional approval, or compliance. Future copying by the
+user's existing Box Sync client is a separate transport phase subject to the
+destination policy above; Phase 1 does not select or copy to a Box destination,
+implement Box APIs/OAuth/authentication, store credentials, or add backup UI.
