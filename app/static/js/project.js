@@ -115,16 +115,26 @@
       if (button.dataset.act === 'del') {
         const doc = documents.find((d) => d.id === id);
         const name = doc ? doc.filename : 'this file';
-        if (!confirm(
-          `Remove "${name}"?\n\nThis permanently deletes the media file, its ` +
-          `transcript, and every exported output for it. This cannot be undone.`
-        )) return;
+        const choice = prompt(
+          `Remove "${name}", its transcript, and outputs? Type BACKUP to create an ` +
+          `unencrypted local snapshot first, DELETE to continue without one, or Cancel to abort.`
+        );
+        if (choice === null) return;
+        const action = choice.trim().toUpperCase();
+        if (!['BACKUP', 'DELETE'].includes(action)) {
+          LS.toast('Type BACKUP or DELETE to continue.', 'warn');
+          return;
+        }
         button.disabled = true;
         try {
-          await LS.del(`/api/projects/${encodeURIComponent(slug)}/documents/${encodeURIComponent(id)}`);
+          await LS.del(
+            `/api/projects/${encodeURIComponent(slug)}/documents/${encodeURIComponent(id)}` +
+            `?snapshot=${action === 'BACKUP'}`
+          );
           documents = documents.filter((d) => d.id !== id);
           render();
           LS.toast(`Removed ${name}.`, 'info');
+          refreshActivity();
         } catch (err) {
           LS.toast(err.message, 'error');
           button.disabled = false;
@@ -354,6 +364,66 @@
 
   /* -------------------------------------------------------- export/delete */
 
+  const activityList = document.getElementById('project-activity');
+  async function refreshActivity() {
+    if (!activityList) return;
+    try {
+      const result = await LS.get(`/api/projects/${encodeURIComponent(slug)}/activity`);
+      activityList.replaceChildren();
+      if (!result.events.length) {
+        const empty = document.createElement('li');
+        empty.textContent = 'No recovery activity yet.';
+        activityList.appendChild(empty);
+      }
+      result.events.slice().reverse().forEach((event) => {
+        const item = document.createElement('li');
+        const time = new Date(event.timestamp).toLocaleString();
+        const action = {
+          create_snapshot: 'Created a local snapshot',
+          remove_recording: 'Removed a recording',
+          delete_project: 'Deleted the project',
+          restore: 'Restored a project snapshot',
+        }[event.action] || 'Recovery action';
+        item.textContent = `${time} — ${action} (${event.outcome})` +
+          (event.snapshot_created ? ', with a pre-action snapshot' : '');
+        activityList.appendChild(item);
+      });
+    } catch (err) {
+      activityList.textContent = 'Local activity history is unavailable.';
+    }
+  }
+
+  const snapshotBtn = document.getElementById('create-snapshot-btn');
+  if (snapshotBtn) {
+    snapshotBtn.addEventListener('click', async () => {
+      snapshotBtn.disabled = true;
+      try {
+        const result = await LS.post(`/api/projects/${encodeURIComponent(slug)}/snapshots`, {});
+        const link = document.getElementById('snapshot-download-link');
+        link.href = `/api/projects/${encodeURIComponent(slug)}/snapshots/${encodeURIComponent(result.filename)}`;
+        link.hidden = false;
+        LS.toast(`Local snapshot created (${LS.bytes(result.size_bytes)}).`, 'ok');
+        refreshActivity();
+      } catch (err) {
+        LS.toast(`Could not create a snapshot: ${err.message}`, 'error');
+      } finally {
+        snapshotBtn.disabled = false;
+      }
+    });
+  }
+
+  const openSnapshotFolderBtn = document.getElementById('open-snapshot-folder-btn');
+  if (openSnapshotFolderBtn) {
+    openSnapshotFolderBtn.addEventListener('click', async () => {
+      try {
+        const result = await LS.post(`/api/projects/${encodeURIComponent(slug)}/snapshots/open`, {});
+        if (!result.opened) LS.toast('The snapshot folder is not available yet.', 'warn');
+      } catch (err) {
+        LS.toast(err.message, 'error');
+      }
+    });
+  }
+
   const exportBtn = document.getElementById('export-btn');
   if (exportBtn) {
     exportBtn.addEventListener('click', () => {
@@ -368,15 +438,20 @@
   if (deleteBtn) {
     deleteBtn.addEventListener('click', async () => {
       const count = documents.length;
-      if (!confirm(
-        `Delete this entire project?\n\nThis permanently removes ` +
-        `${LS.plural(count, 'recording')}, all transcripts, and all exported ` +
-        `files. This cannot be undone.\n\nConsider exporting the project first.`
-      )) return;
-      if (!confirm('Last check: really delete everything in this project?')) return;
+      const choice = prompt(
+        `Delete this entire project (${LS.plural(count, 'recording')}, transcripts, and outputs)? ` +
+        `Type BACKUP to create an unencrypted local snapshot first, DELETE to continue without one, ` +
+        `or Cancel to abort.`
+      );
+      if (choice === null) return;
+      const action = choice.trim().toUpperCase();
+      if (!['BACKUP', 'DELETE'].includes(action)) {
+        LS.toast('Type BACKUP or DELETE to continue.', 'warn');
+        return;
+      }
 
       try {
-        await LS.del(`/api/projects/${encodeURIComponent(slug)}`);
+        await LS.del(`/api/projects/${encodeURIComponent(slug)}?snapshot=${action === 'BACKUP'}`);
         location.href = '/';
       } catch (err) {
         LS.toast(err.message, 'error');
@@ -384,5 +459,6 @@
     });
   }
 
+  refreshActivity();
   render();
 })();

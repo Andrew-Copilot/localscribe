@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import catalog, exporters, media, proofread, projects, update_check, winlibs
+from . import activity, catalog, exporters, media, proofread, projects, update_check, winlibs
 from .config import (
     APP_NAME,
     HOST,
@@ -630,12 +630,16 @@ async def api_update_project(slug: str, request: Request):
 
 
 @app.delete("/api/projects/{slug}")
-async def api_delete_project(slug: str):
+async def api_delete_project(slug: str, snapshot: bool = False):
     try:
         record = projects.load_project(slug)
+        if snapshot:
+            projects.create_local_snapshot(slug)
         projects.delete_project(slug)
     except projects.ProjectError as exc:
+        activity.record(slug, "delete_project", "failed", snapshot_created=False)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(slug, "delete_project", "success", snapshot_created=snapshot)
     CONSOLE.warn(f"Deleted project '{record.get('title')}' and all its files.", slug=slug)
     return {"deleted": True}
 
@@ -701,12 +705,16 @@ async def api_upload(slug: str, files: list[UploadFile]):
 
 
 @app.delete("/api/projects/{slug}/documents/{doc_id}")
-async def api_delete_document(slug: str, doc_id: str):
+async def api_delete_document(slug: str, doc_id: str, snapshot: bool = False):
     try:
         record = projects.load_document(slug, doc_id)
+        if snapshot:
+            projects.create_local_snapshot(slug)
         projects.delete_document(slug, doc_id)
     except projects.ProjectError as exc:
+        activity.record(slug, "remove_recording", "failed", snapshot_created=False)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(slug, "remove_recording", "success", snapshot_created=snapshot)
     CONSOLE.warn(f"Deleted {record.get('filename')} and its transcript.", document=doc_id)
     return {"deleted": True, "stats": projects.project_stats(slug)}
 
@@ -795,6 +803,45 @@ async def api_cancel_all():
 # Import / export
 # ---------------------------------------------------------------------------
 
+@app.post("/api/projects/{slug}/snapshots")
+async def api_create_project_snapshot(slug: str):
+    try:
+        archive = projects.create_local_snapshot(slug)
+    except projects.ProjectError as exc:
+        activity.record(slug, "create_snapshot", "failed")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record(slug, "create_snapshot", "success")
+    return {"filename": archive.name, "size_bytes": archive.stat().st_size}
+
+
+@app.get("/api/projects/{slug}/snapshots/{filename}")
+async def api_download_project_snapshot(slug: str, filename: str):
+    try:
+        archive = projects.get_local_snapshot(slug, filename)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(archive, filename=archive.name, media_type="application/zip")
+
+
+@app.post("/api/projects/{slug}/snapshots/open")
+async def api_open_project_snapshots(slug: str):
+    try:
+        projects.load_project(slug)
+        opened = projects.reveal(projects.local_snapshot_dir(slug))
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"opened": opened}
+
+
+@app.get("/api/projects/{slug}/activity")
+async def api_project_activity(slug: str):
+    try:
+        projects.load_project(slug)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"events": activity.for_project(slug)}
+
+
 @app.get("/api/projects/{slug}/export")
 async def api_export_project(slug: str, include_media: bool = True):
     try:
@@ -812,17 +859,22 @@ async def api_export_project(slug: str, include_media: bool = True):
 
 
 @app.post("/api/projects/import")
-async def api_import_project(file: UploadFile, mode: str = Form("rename")):
+async def api_import_project(
+    file: UploadFile, mode: str = Form("prompt"), snapshot_before: bool = Form(False),
+):
     with tempfile.NamedTemporaryFile(prefix="import-", suffix=".tmp", dir=PATHS.logs, delete=False) as tmp:
         staging = Path(tmp.name)
     try:
         staging.write_bytes(await file.read())
-        record = projects.import_project(staging, mode=mode)
+        record = projects.import_project(staging, mode=mode, snapshot_before=snapshot_before)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         staging.unlink(missing_ok=True)
 
+    if record.get("conflict"):
+        return record
+    activity.record(record["slug"], "restore", "success", mode=mode)
     CONSOLE.success(
         f"Imported project archive with {record['stats']['documents']} document(s)",
     )
