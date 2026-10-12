@@ -1,7 +1,8 @@
 # Decision: local sensitivity guardrails and future Box Sync transport
 
-This implements the classification/guardrail foundation of [R02, issue #3](https://github.com/Andrew-Copilot/localscribe/issues/3)
-only. No backup transport or backup UI is implemented.
+This documents the classification/guardrail foundation of [R02, issue #3](https://github.com/Andrew-Copilot/localscribe/issues/3)
+only. It does not implement Box Sync transport or Box backup UI. Local
+recovery snapshots are a separate R04 feature.
 
 ## Decision and revised roadmap
 
@@ -50,7 +51,8 @@ must not exclude these artifacts or imply that derived data is automatically saf
 
 ## Out of scope
 
-Remote backups, local snapshots, Box Sync directory copying, Box APIs,
-authentication/credential storage, retention, deletion, remote versioning, and
-Box application registration are not part of this slice. Transcription behavior
-is unchanged. Tests use synthetic records only.
+Remote backups, Box Sync directory copying, Box APIs, authentication/credential
+storage, retention, deletion, remote versioning, and Box application registration
+are not part of this slice. Local recovery snapshots are implemented separately
+with the verified `.lsproj` archive format. Transcription behavior is unchanged.
+Tests use synthetic records only.

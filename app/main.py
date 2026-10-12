@@ -16,7 +16,6 @@ import asyncio
 import io
 import json
 import os
-import tempfile
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
@@ -198,7 +197,12 @@ async def page_index(request: Request):
     return templates.TemplateResponse(
         request,
         "index.html",
-        base_context(request, projects=projects.list_projects()),
+        base_context(
+            request,
+            projects=projects.list_projects(),
+            snapshots=projects.list_all_snapshots(),
+            activities=activity.recent(),
+        ),
     )
 
 
@@ -858,11 +862,10 @@ async def api_restore_snapshot(slug: str, snapshot_id: str, request: Request):
         payload = {}
     mode = payload.get("mode", "abort") if isinstance(payload, dict) else "abort"
     try:
-        project = projects.load_project(slug)
-        if mode == "abort":
-            activity.record("snapshot_restore", project.get("project_id") or project["slug"], "aborted")
-            return {"aborted": True}
         restored = projects.restore_snapshot(slug, snapshot_id, mode=mode)
+        if restored is None:
+            activity.record("snapshot_restore", slug, "aborted")
+            return {"aborted": True}
     except projects.ProjectConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except projects.ProjectValidationError as exc:
@@ -871,11 +874,18 @@ async def api_restore_snapshot(slug: str, snapshot_id: str, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     activity.record(
         "snapshot_restore",
-        project.get("project_id") or project["slug"],
+        restored.get("project_id") or restored["slug"],
         f"restored_{mode}",
     )
     CONSOLE.success("Restored a local recovery snapshot.", slug=restored["slug"])
     return {"project": restored}
+
+
+@app.post("/api/snapshots/{slug}/{snapshot_id}/restore")
+async def api_restore_deleted_project_snapshot(
+    slug: str, snapshot_id: str, request: Request
+):
+    return await api_restore_snapshot(slug, snapshot_id, request)
 
 
 @app.get("/api/activity")
@@ -908,6 +918,7 @@ async def api_import_project(
     name = file.filename or "archive"
     staging = PATHS.logs / f"import-{os.getpid()}-{uuid4().hex}.lsproj"
     try:
+        staging.parent.mkdir(parents=True, exist_ok=True)
         staging.write_bytes(await file.read())
         if mode == "replace" and snapshot_before_replace not in ("yes", "no"):
             raise HTTPException(

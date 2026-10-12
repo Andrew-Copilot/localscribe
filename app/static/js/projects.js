@@ -105,4 +105,38 @@
       }
     });
   }
+
+  const restoreBtn = document.getElementById('restore-library-snapshot-btn');
+  if (restoreBtn) {
+    restoreBtn.addEventListener('click', async () => {
+      const select = document.getElementById('recovery-snapshot-select');
+      const option = select && select.selectedOptions[0];
+      const mode = document.getElementById('recovery-restore-mode').value;
+      if (!option || mode === 'abort') {
+        LS.toast('No restore was performed.', 'info');
+        return;
+      }
+      if (mode === 'replace' && !confirm(
+        'Replace the existing project with this snapshot? A safety snapshot ' +
+        'will be created first.'
+      )) return;
+
+      restoreBtn.disabled = true;
+      try {
+        const result = await LS.post(
+          `/api/snapshots/${encodeURIComponent(option.dataset.slug)}/` +
+          `${encodeURIComponent(option.value)}/restore`,
+          { mode }
+        );
+        if (result.aborted) {
+          LS.toast('Restore cancelled.', 'info');
+        } else {
+          location.href = `/project/${encodeURIComponent(result.project.slug)}`;
+        }
+      } catch (err) {
+        LS.toast(`Could not restore the snapshot: ${err.message}`, 'error', 10000);
+        restoreBtn.disabled = false;
+      }
+    });
+  }
 })();

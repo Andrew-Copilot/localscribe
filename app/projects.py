@@ -465,8 +465,7 @@ def create_snapshot(
 
 
 def list_snapshots(slug: str) -> list[dict]:
-    record = load_project(slug)
-    snapshot_dir = _snapshot_dir(record["slug"])
+    snapshot_dir = _snapshot_dir(slug)
     if not snapshot_dir.is_dir():
         return []
     snapshots = []
@@ -485,10 +484,23 @@ def list_snapshots(slug: str) -> list[dict]:
     return sorted(snapshots, key=lambda item: item["created"], reverse=True)
 
 
+def list_all_snapshots() -> list[dict]:
+    root = PATHS.projects / ".snapshots"
+    if not root.is_dir():
+        return []
+    snapshots = []
+    for project_dir in root.iterdir():
+        if not project_dir.is_dir():
+            continue
+        for snapshot in list_snapshots(project_dir.name):
+            snapshot["project_slug"] = project_dir.name
+            snapshots.append(snapshot)
+    return sorted(snapshots, key=lambda item: item["created"], reverse=True)
+
+
 def restore_snapshot(slug: str, snapshot_id: str, mode: str = "abort") -> dict | None:
     """Restore a saved archive after validating its identity and integrity."""
-    record = load_project(slug)
-    snapshot_dir = _snapshot_dir(record["slug"]).resolve()
+    snapshot_dir = _snapshot_dir(slug).resolve()
     candidate = Path(str(snapshot_id))
     if (
         candidate.name != str(snapshot_id)

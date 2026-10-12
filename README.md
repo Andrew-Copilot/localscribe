@@ -288,6 +288,7 @@ the repetition penalty slightly, then re-transcribe.
 .venv/Scripts/python.exe -m tests.test_assets        # front-end asset guards
 .venv/Scripts/python.exe -m tests.test_sensitivity   # project declarations and future backup policy
 .venv/Scripts/python.exe -m tests.test_project_archives # archive integrity and legacy compatibility
+.venv/Scripts/python.exe -m tests.test_recovery       # local snapshots and recovery safeguards
 .venv/Scripts/python.exe -m tests.test_speakers       # roster and speaking turns
 .venv/Scripts/python.exe -m tests.test_proofread     # spelling and artefacts
 .venv/Scripts/python.exe -m tests.test_winlibs       # Windows DLL discovery
@@ -300,7 +301,15 @@ Projects have a user-declared source-media sensitivity, defaulting to
 **Unknown — treat as PHI**. This controls future backup safeguards, not whether
 data is PHI, and provides no compliance advice. See the
 [Box Sync decision and local guardrails](docs/box-sync-decision.md).
-This foundation does not implement backup.
+
+Recovery snapshots use the verified `.lsproj` archive format and are stored
+locally under `projects/.snapshots/`, outside each project folder. You can
+include or omit source media when creating a snapshot. Deleting projects or
+recordings offers the option to snapshot first; replacing a project during
+restore creates a safety snapshot. Snapshots remain on the same computer and
+are not protection from drive loss, so copy important snapshots to a separate
+approved location. The app keeps a bounded local history of recovery actions.
+No cloud backup or Box Sync copying is implemented.
 
 ## Versioning
 

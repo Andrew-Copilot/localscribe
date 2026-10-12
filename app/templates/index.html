@@ -94,6 +94,54 @@
 </div>
 {% endif %}
 
+<div class="card" id="recovery-library">
+  <h2>Recovery snapshots</h2>
+  <p class="small muted">
+    Snapshots stay on this computer, including after a project is deleted.
+    They are not a substitute for a separate backup.
+  </p>
+  {% if snapshots %}
+  <div class="field-row">
+    <div class="field">
+      <label for="recovery-snapshot-select">Saved snapshot</label>
+      <select id="recovery-snapshot-select">
+        {% for snapshot in snapshots %}
+        <option value="{{ snapshot.snapshot_id }}" data-slug="{{ snapshot.project_slug }}">
+          {{ snapshot.project_slug }} · {{ snapshot.created[:19].replace('T', ' ') }} ·
+          {{ '{:,}'.format(snapshot.size_bytes) }} bytes
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="recovery-restore-mode">If the project exists</label>
+      <select id="recovery-restore-mode">
+        <option value="abort">Abort (default)</option>
+        <option value="rename">Restore as a separate project</option>
+        <option value="replace">Replace it (create safety snapshot)</option>
+      </select>
+    </div>
+    <div class="field" style="align-self:end">
+      <button type="button" class="btn" id="restore-library-snapshot-btn">
+        Restore selected snapshot
+      </button>
+    </div>
+  </div>
+  {% else %}
+  <p class="small muted">No local recovery snapshots have been created.</p>
+  {% endif %}
+  <h3>Recent recovery activity</h3>
+  {% if activities %}
+  <ul class="small">
+    {% for event in activities|reverse %}
+    <li>{{ event.timestamp[:19].replace('T', ' ') }} · {{ event.action.replace('_', ' ') }} · {{ event.outcome.replace('_', ' ') }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="small muted">No recovery actions recorded.</p>
+  {% endif %}
+</div>
+
 <div class="card" style="margin-top:1.5rem">
   <h3>How this protects your data</h3>
   <p class="small muted">
