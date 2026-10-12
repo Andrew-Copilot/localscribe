@@ -1,0 +1,63 @@
+name: Create roadmap issues
+
+# Optional alternative to running scripts/create_roadmap_issues.py in a
+# Codespace (see docs/roadmap/CREATE_ISSUES.md). Manual trigger only. It is a
+# dry run unless the confirmation input is exactly CREATE_ROADMAP_ISSUES.
+# The generated issue index is published as a job summary and an artifact
+# instead of being committed, so the job never needs write access to code.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type CREATE_ROADMAP_ISSUES to create issues. Anything else is a dry run."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: create-roadmap-issues
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate definitions and tests (no GitHub access)
+        run: |
+          python scripts/create_roadmap_issues.py --validate-only
+          python -m tests.test_roadmap_issues
+      - name: Run importer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" = "CREATE_ROADMAP_ISSUES" ]; then
+            echo "Confirmation matched: creating issues."
+            python scripts/create_roadmap_issues.py --repo "$GITHUB_REPOSITORY" --apply \
+              --index "$RUNNER_TEMP/issue-index.md"
+          else
+            echo "Confirmation not given: dry run only."
+            python scripts/create_roadmap_issues.py --repo "$GITHUB_REPOSITORY"
+          fi
+      - name: Publish issue index
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/issue-index.md" ]; then
+            cat "$RUNNER_TEMP/issue-index.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Dry run: no issue index generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: roadmap-issue-index
+          path: ${{ runner.temp }}/issue-index.md
+          if-no-files-found: ignore

@@ -1,0 +1,511 @@
+{
+  "repository": "Andrew-Copilot/localscribe",
+  "source": "docs/roadmap/issue-backlog.md",
+  "governance_labels": [
+    "phi",
+    "box"
+  ],
+  "governance_notice": "**Rule for PHI-related work:** no production Box Health Data Folder integration, test account, test artifact, or user-facing compliance claim may be created until U of I HIPAA Privacy Office and Box administrators approve the architecture.",
+  "labels": [
+    {
+      "name": "roadmap",
+      "color": "0e8a16",
+      "description": "Planned work from docs/roadmap"
+    },
+    {
+      "name": "privacy",
+      "color": "5319e7",
+      "description": "Privacy, data custody, or network behaviour"
+    },
+    {
+      "name": "box",
+      "color": "1d76db",
+      "description": "U of I Box backup integration"
+    },
+    {
+      "name": "phi",
+      "color": "b60205",
+      "description": "May involve protected health information; governance gate applies"
+    },
+    {
+      "name": "blocked",
+      "color": "d93f0b",
+      "description": "Waiting on an external decision or approval"
+    },
+    {
+      "name": "backup",
+      "color": "0052cc",
+      "description": "Backup, snapshot, and restore"
+    },
+    {
+      "name": "research-workflow",
+      "color": "c5def5",
+      "description": "Researcher review, validation, and project workflow"
+    },
+    {
+      "name": "security",
+      "color": "b60205",
+      "description": "Security-sensitive work"
+    },
+    {
+      "name": "support",
+      "color": "bfdadc",
+      "description": "Supportability and diagnostics"
+    },
+    {
+      "name": "reliability",
+      "color": "fbca04",
+      "description": "Startup, storage, and runtime health"
+    },
+    {
+      "name": "editor",
+      "color": "bfd4f2",
+      "description": "Transcript editor and review UI"
+    },
+    {
+      "name": "accessibility",
+      "color": "006b75",
+      "description": "Keyboard, screen-reader, contrast, and scaling support"
+    },
+    {
+      "name": "provenance",
+      "color": "c2e0c6",
+      "description": "Validation status and export provenance"
+    },
+    {
+      "name": "architecture",
+      "color": "5319e7",
+      "description": "Formats, specifications, and structural design"
+    },
+    {
+      "name": "collaboration",
+      "color": "0e8a16",
+      "description": "Offline handoff and annotations"
+    },
+    {
+      "name": "transcription",
+      "color": "1d76db",
+      "description": "Transcription quality and settings"
+    },
+    {
+      "name": "high-risk",
+      "color": "b60205",
+      "description": "Needs extra privacy/safety review before release"
+    },
+    {
+      "name": "speakers",
+      "color": "c5def5",
+      "description": "Speaker labelling and diarization"
+    },
+    {
+      "name": "quality",
+      "color": "fbca04",
+      "description": "Quality engineering"
+    },
+    {
+      "name": "testing",
+      "color": "ededed",
+      "description": "Automated tests and fixtures"
+    },
+    {
+      "name": "distribution",
+      "color": "d4c5f9",
+      "description": "Packaging, signing, and distribution"
+    }
+  ],
+  "milestones": [
+    {
+      "key": "m102",
+      "title": "1.02 — Safe storage and recovery",
+      "description": "Researchers can back up and restore projects safely, with PHI-aware Box safeguards."
+    },
+    {
+      "key": "m103",
+      "title": "1.03 — Fast human validation",
+      "description": "Researchers can review uncertain transcript sections quickly and record validation status."
+    },
+    {
+      "key": "m104",
+      "title": "1.04 — Portable research collaboration",
+      "description": "Projects can be handed off, inspected, and re-imported without a cloud service."
+    },
+    {
+      "key": "m105",
+      "title": "1.05 — Research-quality assistance",
+      "description": "Vocabulary, de-identification review, multilingual validation, and cautious speaker assistance improve outcomes."
+    },
+    {
+      "key": "ongoing",
+      "title": "Ongoing — Accessibility, release trust, quality",
+      "description": "The app is usable, supportable, testable, and trusted on supported desktops."
+    }
+  ],
+  "issues": [
+    {
+      "id": "R01",
+      "title": "Define the U of I Box and BHDF integration policy",
+      "milestone": "m102",
+      "labels": [
+        "roadmap",
+        "privacy",
+        "box",
+        "phi",
+        "blocked"
+      ],
+      "goal": "Obtain institutional decisions required to design a compliant opt-in U of I Box backup feature.",
+      "acceptance_criteria": [
+        "Written guidance confirms whether a Local Scribe Box app may access BHDFs.",
+        "An approved BHDF-identification method is documented; folder names alone are explicitly rejected.",
+        "OAuth application type, scopes, token storage, retention, collaboration, and audit expectations are documented.",
+        "Approved test process uses no PHI unless specifically authorized.",
+        "Product copy is reviewed so Local Scribe does not overstate HIPAA/IRB compliance."
+      ],
+      "depends_on": [],
+      "sequenced_after": [],
+      "dependency_note": "U of I HIPAA Privacy Office, Box administrators, institutional security review."
+    },
+    {
+      "id": "R02",
+      "title": "Add per-project data sensitivity declaration",
+      "milestone": "m102",
+      "labels": [
+        "roadmap",
+        "privacy",
+        "phi",
+        "backup"
+      ],
+      "acceptance_criteria": [
+        "Projects support `no_phi`, `may_contain_phi`, and `unknown_treat_as_phi` states.",
+        "New-project and first-backup flows explain selection responsibility.",
+        "PHI/unknown states prevent non-BHDF remote backup.",
+        "State is present in project metadata and backup manifests.",
+        "Existing projects migrate to conservative defaults."
+      ],
+      "depends_on": [
+        "R01"
+      ],
+      "sequenced_after": [],
+      "dependency_note": "R01 for final BHDF enforcement behavior."
+    },
+    {
+      "id": "R03",
+      "title": "Build a stable, checksummed project snapshot format",
+      "milestone": "m102",
+      "labels": [
+        "roadmap",
+        "backup",
+        "research-workflow"
+      ],
+      "acceptance_criteria": [
+        "Immutable snapshot excludes transient caches/logs by default.",
+        "Manifest contains format/app version, project ID, transcription provenance, files, sizes, and SHA-256 checksums.",
+        "Media-included and transcript-only modes are supported.",
+        "Restore verifies checksums before import.",
+        "Archive schema is versioned and migration-tested."
+      ],
+      "depends_on": [],
+      "sequenced_after": [
+        "R02"
+      ]
+    },
+    {
+      "id": "R04",
+      "title": "Implement local backup, restore, and destructive-action safeguards",
+      "milestone": "m102",
+      "labels": [
+        "roadmap",
+        "backup",
+        "privacy"
+      ],
+      "acceptance_criteria": [
+        "UI supports local snapshot creation and restore.",
+        "Destructive actions and overwrite imports offer confirmation and snapshot option.",
+        "Restore never silently overwrites; it offers rename/replace/abort.",
+        "Outcomes appear in local activity history."
+      ],
+      "depends_on": [
+        "R03"
+      ],
+      "sequenced_after": []
+    },
+    {
+      "id": "R05",
+      "title": "Implement opt-in U of I Box backup connector",
+      "milestone": "m102",
+      "labels": [
+        "roadmap",
+        "backup",
+        "box",
+        "privacy",
+        "phi"
+      ],
+      "acceptance_criteria": [
+        "OAuth sign-in/revocation, folder selection, upload, retry, cancellation, and post-upload verification work.",
+        "Credentials use OS credential storage, never archives/logs.",
+        "Remote work requires explicit user action and is blocked by Offline Lock.",
+        "PHI/unknown projects target only a verified BHDF according to R01.",
+        "No generic Box folder is selected automatically.",
+        "Mocked API tests cover auth failure, partial upload, destination rejection, and token revocation."
+      ],
+      "depends_on": [
+        "R01",
+        "R02",
+        "R03"
+      ],
+      "sequenced_after": []
+    },
+    {
+      "id": "R06",
+      "title": "Add privacy center, activity history, and sanitized diagnostics",
+      "milestone": "m102",
+      "labels": [
+        "roadmap",
+        "privacy",
+        "security",
+        "support"
+      ],
+      "acceptance_criteria": [
+        "Privacy Center shows Offline Lock, backup configuration, storage location, and last remote action.",
+        "Activity history records network-affecting and recovery actions.",
+        "Diagnostics exclude media, transcript content, tokens, and user paths by default.",
+        "Users inspect diagnostics before saving."
+      ],
+      "depends_on": [],
+      "sequenced_after": [
+        "R01",
+        "R02",
+        "R03"
+      ]
+    },
+    {
+      "id": "R07",
+      "title": "Add startup and storage health checks",
+      "milestone": "m102",
+      "labels": [
+        "roadmap",
+        "reliability",
+        "support"
+      ],
+      "acceptance_criteria": [
+        "Checks report low storage, inaccessible data directory, corrupt/missing model data, and unsupported runtime.",
+        "Model download flows show estimated disk requirements.",
+        "Checks never transmit data."
+      ],
+      "depends_on": [],
+      "sequenced_after": [
+        "R01",
+        "R02",
+        "R03"
+      ]
+    },
+    {
+      "id": "R08",
+      "title": "Create Review Mode and issue queue",
+      "milestone": "m103",
+      "labels": [
+        "roadmap",
+        "research-workflow",
+        "editor"
+      ],
+      "acceptance_criteria": [
+        "Queue supports low-confidence segments, possible artifacts, unassigned speakers, flags, and changed-since-validation segments.",
+        "Filters, counts, and completion progress are visible.",
+        "Review actions advance efficiently to the next unresolved item.",
+        "Queue state is portable with project data."
+      ],
+      "depends_on": [],
+      "sequenced_after": []
+    },
+    {
+      "id": "R09",
+      "title": "Add playback and keyboard-first review controls",
+      "milestone": "m103",
+      "labels": [
+        "roadmap",
+        "editor",
+        "accessibility"
+      ],
+      "acceptance_criteria": [
+        "Playback speed, pre-roll/post-roll, loop/replay, waveform cursor, and zoom are available.",
+        "Core actions have documented keyboard shortcuts.",
+        "Controls have accessible labels and focus.",
+        "Tests cover timestamp seeking and range-media behavior."
+      ],
+      "depends_on": [],
+      "sequenced_after": [
+        "R08"
+      ]
+    },
+    {
+      "id": "R10",
+      "title": "Add validation states, sign-off, and export provenance",
+      "milestone": "m103",
+      "labels": [
+        "roadmap",
+        "research-workflow",
+        "provenance"
+      ],
+      "acceptance_criteria": [
+        "State model is Draft → Transcribed → In review → Validated → Exported.",
+        "Reviewer, time, and notes are stored locally.",
+        "Reopening validation is deliberate and recorded.",
+        "Export status/provenance is included where format permits."
+      ],
+      "depends_on": [],
+      "sequenced_after": [
+        "R09"
+      ]
+    },
+    {
+      "id": "R11",
+      "title": "Specify and version the `.lsproj` interchange format",
+      "milestone": "m104",
+      "labels": [
+        "roadmap",
+        "research-workflow",
+        "architecture"
+      ],
+      "acceptance_criteria": [
+        "Public specification covers manifest, checksums, version, provenance, and migrations.",
+        "Transcript-only imports clearly identify missing media.",
+        "Integrity results are visible.",
+        "Golden archives protect backward compatibility."
+      ],
+      "depends_on": [],
+      "sequenced_after": []
+    },
+    {
+      "id": "R12",
+      "title": "Build offline handoff, annotations, and conflict handling",
+      "milestone": "m104",
+      "labels": [
+        "roadmap",
+        "research-workflow",
+        "collaboration"
+      ],
+      "acceptance_criteria": [
+        "Review package supports selected transcript, optional media, instructions, and annotations.",
+        "Timestamped comments/questions persist.",
+        "Conflict import preserves both versions and guides resolution.",
+        "No real-time synchronization is added."
+      ],
+      "depends_on": [
+        "R11"
+      ],
+      "sequenced_after": []
+    },
+    {
+      "id": "R13",
+      "title": "Add vocabulary profiles and study presets",
+      "milestone": "m105",
+      "labels": [
+        "roadmap",
+        "transcription",
+        "research-workflow"
+      ],
+      "acceptance_criteria": [
+        "Profiles support reuse, CSV/TXT import, and project assignment.",
+        "They integrate transparently with prompt/hotword settings.",
+        "Provenance records profile/settings without exporting sensitive vocabulary by default.",
+        "An uncertain-term report is available."
+      ],
+      "depends_on": [],
+      "sequenced_after": []
+    },
+    {
+      "id": "R14",
+      "title": "Add reversible de-identification review assistance",
+      "milestone": "m105",
+      "labels": [
+        "roadmap",
+        "privacy",
+        "research-workflow",
+        "high-risk"
+      ],
+      "acceptance_criteria": [
+        "Configurable assistive flags cover common identifiers and custom patterns.",
+        "Replacements are explicit, reversible, and revision-tracked.",
+        "Replacement map is local and excluded from shareable exports by default.",
+        "Review report lists flagged/resolved/skipped items.",
+        "UI/docs say it is not a compliance guarantee."
+      ],
+      "depends_on": [],
+      "sequenced_after": [],
+      "sequencing_note": "Privacy review is required before R14 is released."
+    },
+    {
+      "id": "R15",
+      "title": "Validate multilingual support and improve speaker workflow",
+      "milestone": "m105",
+      "labels": [
+        "roadmap",
+        "transcription",
+        "speakers"
+      ],
+      "acceptance_criteria": [
+        "Supported languages have tested transcription, proofreading, exports, and UI behavior.",
+        "Detection/selection only claims supported coverage.",
+        "Manual speaker workflow improves before automation.",
+        "Experimental diarization is opt-in, confidence-marked, reversible, and human-confirmed."
+      ],
+      "depends_on": [],
+      "sequenced_after": []
+    },
+    {
+      "id": "R16",
+      "title": "Accessibility release baseline",
+      "milestone": "ongoing",
+      "labels": [
+        "accessibility",
+        "roadmap"
+      ],
+      "acceptance_criteria": [
+        "Keyboard-only operation covers main workflows and modals.",
+        "Screen-reader labels, focus behavior, scalable text, high contrast, and non-color cues are tested.",
+        "Accessibility checks are part of PR/release review."
+      ],
+      "depends_on": [],
+      "sequenced_after": [],
+      "sequencing_note": "Proceeds continuously alongside the milestones."
+    },
+    {
+      "id": "R17",
+      "title": "End-to-end quality and regression suite",
+      "milestone": "ongoing",
+      "labels": [
+        "quality",
+        "testing",
+        "roadmap"
+      ],
+      "acceptance_criteria": [
+        "Non-sensitive fixtures cover import → processing fixture → edit/review → export → archive/import.",
+        "Golden outputs cover SRT, VTT, DOCX, JSON, and archive manifests.",
+        "Migration/package upgrade tests cover supported desktops.",
+        "Box tests are mocked and never use PHI."
+      ],
+      "depends_on": [],
+      "sequenced_after": [],
+      "sequencing_note": "Proceeds continuously alongside the milestones."
+    },
+    {
+      "id": "R18",
+      "title": "Code-signing and distribution feasibility spike",
+      "milestone": "ongoing",
+      "labels": [
+        "security",
+        "distribution",
+        "roadmap"
+      ],
+      "acceptance_criteria": [
+        "Windows MSIX/Microsoft Store compatibility is evaluated with local data, bundled Python, model downloads, and updates.",
+        "macOS Developer ID/notarization and possible U of I fee-waiver path are documented.",
+        "SignPath Foundation eligibility is investigated as non-guaranteed.",
+        "CI secret management and signature/notarization verification plans are documented.",
+        "Decision record compares cost, user friction, work, and supportability."
+      ],
+      "depends_on": [],
+      "sequenced_after": [],
+      "sequencing_note": "Proceeds continuously; begin early enough to affect the next installer release."
+    }
+  ]
+}

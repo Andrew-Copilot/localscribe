@@ -191,4 +191,5 @@ Implement a signing feasibility spike before committing to a distribution channe
 ## Planning references
 
 - `docs/roadmap/issue-backlog.md` contains issue-ready work items and dependencies.
+- [`CREATE_ISSUES.md`](CREATE_ISSUES.md) explains how to create these as GitHub issues automatically (phone-friendly, via Codespaces or Actions).
 - Policy and implementation choices concerning PHI/BHDF must be reviewed by the responsible U of I offices before implementation.
