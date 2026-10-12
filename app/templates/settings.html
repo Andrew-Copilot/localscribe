@@ -13,6 +13,31 @@
   </div>
 </div>
 
+<section class="card" id="local-health">
+  <div class="row">
+    <h2 class="grow">Local health checks</h2>
+    <button type="button" class="btn btn-small btn-quiet" id="recheck-health">
+      Re-check
+    </button>
+  </div>
+  <p class="card-note">
+    Checks inspect this computer's storage, data folders, selected model files,
+    and Python runtime only. They make no outbound requests or send data off
+    this computer.
+  </p>
+  <ul class="health-checks">
+    {% for check in health.checks %}
+    <li>
+      <span class="badge
+        {% if check.status == 'ok' %}badge-ok
+        {% elif check.status == 'warning' %}badge-warn
+        {% else %}badge-err{% endif %}">{{ check.status }}</span>
+      <span><strong>{{ check.label }}</strong> — {{ check.detail }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
 <!-- Hardware and recommendation -->
 <div class="card">
   <h2>This machine</h2>
@@ -122,6 +147,9 @@
           </td>
           <td class="small nowrap">
             {{ model.download_mb }} MB
+            {% if not model.downloaded %}
+            <div class="muted">Reserve ~{{ (model.recommended_free_bytes / 1000000)|round|int }} MB free</div>
+            {% endif %}
             {% if model.downloaded %}<div class="badge badge-ok">on disk</div>{% endif %}
           </td>
           <td class="small">{{ model.speed }}</td>
@@ -137,6 +165,8 @@
             {% else %}
               <button type="button" class="btn btn-small btn-primary"
                       data-act="download" data-model="{{ model.key }}"
+                      data-download-bytes="{{ model.download_bytes }}"
+                      data-required-bytes="{{ model.recommended_free_bytes }}"
                       {% if values.offline_lock %}disabled title="Offline lock is engaged"{% endif %}>
                 Download
               </button>

@@ -32,6 +32,7 @@ from . import (
     catalog,
     diagnostics,
     exporters,
+    health,
     media,
     proofread,
     projects,
@@ -291,6 +292,7 @@ async def page_settings(request: Request):
             schema=SETTINGS_SCHEMA,
             values=SETTINGS.all(),
             catalog=catalog.catalog_payload(hardware),
+            health=health.run(model_key=SETTINGS.get("model")),
             advanced_raw=json.dumps(SETTINGS.get("advanced_raw") or {}, indent=2),
             is_git_checkout=update_check.is_git_checkout(),
         ),
@@ -379,6 +381,12 @@ async def api_console(since: int = 0, limit: int = 500):
 async def api_diagnostics():
     """Preview an allow-listed diagnostics document; never persists it."""
     return diagnostics.build(ENGINE.status())
+
+
+@app.get("/api/health")
+async def api_health():
+    """Inspect local storage and runtime state without making network requests."""
+    return health.run(model_key=SETTINGS.get("model"))
 
 
 @app.websocket("/ws/console")
@@ -523,7 +531,11 @@ async def api_download_model(model_key: str):
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Unknown model '{model_key}'.")
     if catalog.is_downloaded(model_key):
-        return {"already": True, "job": None}
+        return {
+            "already": True,
+            "job": None,
+            "disk_estimate": catalog.disk_estimate(model_key),
+        }
     if SETTINGS.get("offline_lock"):
         raise HTTPException(
             status_code=409,
@@ -531,7 +543,11 @@ async def api_download_model(model_key: str):
                    "download a model, then turn it back on.",
         )
     job = QUEUE.submit_download(model_key)
-    return {"already": False, "job": job.to_dict()}
+    return {
+        "already": False,
+        "job": job.to_dict(),
+        "disk_estimate": catalog.disk_estimate(model_key),
+    }
 
 
 @app.delete("/api/models/{model_key}")

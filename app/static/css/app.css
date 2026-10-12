@@ -257,6 +257,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .badge-run { background: var(--accent-soft); color: var(--accent-dark); border-color: #bcdedb; }
 .badge-warn { background: var(--warn-soft); color: var(--warn); border-color: #f0dcb8; }
 .badge-err { background: var(--error-soft); color: var(--error); border-color: #edc9c7; }
+.health-checks { list-style: none; margin: .7rem 0 0; padding: 0; }
+.health-checks li { display: flex; align-items: baseline; gap: .55rem; margin: .45rem 0; }
+.health-checks .badge { flex: 0 0 auto; }
 
 .notice {
   border: 1px solid var(--line); border-left: 3px solid var(--ink-3);

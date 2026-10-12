@@ -103,6 +103,22 @@
     });
   }
 
+  const recheckHealth = document.getElementById('recheck-health');
+  if (recheckHealth) {
+    recheckHealth.addEventListener('click', async () => {
+      recheckHealth.disabled = true;
+      recheckHealth.textContent = 'Checking...';
+      try {
+        await LS.get('/api/health');
+        location.reload();
+      } catch (err) {
+        LS.toast(err.message, 'error');
+        recheckHealth.disabled = false;
+        recheckHealth.textContent = 'Re-check';
+      }
+    });
+  }
+
   /* ------------------------------------------------------ restore defaults */
 
   const resetBtn = document.getElementById('reset-settings');
@@ -258,6 +274,13 @@
       const act = button.dataset.act;
 
       if (act === 'download') {
+        const downloadBytes = Number(button.dataset.downloadBytes) || 0;
+        const requiredBytes = Number(button.dataset.requiredBytes) || downloadBytes;
+        if (!confirm(
+          `Download ${key}?\n\nThe download is estimated at about ` +
+          `${LS.bytes(downloadBytes)}. Keep about ${LS.bytes(requiredBytes)} ` +
+          'free on the model storage drive for the download and normal app use.'
+        )) return;
         button.disabled = true;
         button.textContent = 'Starting...';
         if (window.LSConsole) LSConsole.open();
@@ -269,7 +292,10 @@
             return;
           }
           button.textContent = 'Downloading...';
-          LS.toast('Download queued. Progress appears in the console.', 'ok');
+          LS.toast(
+            `Download queued; reserve about ${LS.bytes(requiredBytes)} free. ` +
+            'Progress appears in the console.',
+            'ok');
           watchDownload(key, button);
         } catch (err) {
           LS.toast(err.message, 'error', 10000);
