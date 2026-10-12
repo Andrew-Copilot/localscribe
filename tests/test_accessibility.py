@@ -18,6 +18,11 @@ DOCUMENT = ROOT / "app" / "templates" / "document.html"
 SETTINGS = ROOT / "app" / "templates" / "settings.html"
 EDITOR = ROOT / "app" / "static" / "js" / "editor.js"
 SPEAKERS = ROOT / "app" / "static" / "js" / "speakers.js"
+APP_JS = ROOT / "app" / "static" / "js" / "app.js"
+PROJECTS_JS = ROOT / "app" / "static" / "js" / "projects.js"
+PROJECT_JS = ROOT / "app" / "static" / "js" / "project.js"
+INDEX = ROOT / "app" / "templates" / "index.html"
+PROJECT = ROOT / "app" / "templates" / "project.html"
 
 FAILURES: list[str] = []
 
@@ -80,6 +85,34 @@ def test_keyboard_speaker_workflow_and_color_cues():
           and "class=\"speaker-key\"" in speakers)
 
 
+def test_disclosure_keyboard_and_focus_behavior():
+    base = BASE.read_text(encoding="utf-8")
+    index = INDEX.read_text(encoding="utf-8")
+    project = PROJECT.read_text(encoding="utf-8")
+    app_js = APP_JS.read_text(encoding="utf-8")
+    projects_js = PROJECTS_JS.read_text(encoding="utf-8")
+    project_js = PROJECT_JS.read_text(encoding="utf-8")
+
+    check("engine status disclosure exposes its expanded state and named region",
+          'aria-expanded="false" aria-controls="engine-panel"' in base
+          and 'role="region"' in base
+          and 'aria-labelledby="engine-panel-title"' in base)
+    check("engine disclosure closes with Escape and returns focus",
+          "event.key === 'Escape'" in app_js
+          and "closePanel(true)" in app_js
+          and "pill.focus()" in app_js)
+    check("project forms expose their disclosure relationship",
+          'aria-controls="new-project"' in index
+          and 'aria-labelledby="new-project-title"' in index
+          and 'aria-controls="meta-form"' in project
+          and 'aria-labelledby="meta-form-title"' in project)
+    check("project forms close with Escape and return focus to their opener",
+          "event.key === 'Escape'" in projects_js
+          and "opener.focus()" in projects_js
+          and "event.key === 'Escape'" in project_js
+          and "editBtn.focus()" in project_js)
+
+
 def test_focus_scaling_contrast_and_motion_preferences():
     css = CSS.read_text(encoding="utf-8")
     check("default type scales with the user's root font size",
@@ -104,6 +137,7 @@ def main() -> int:
     for test in (
         test_landmarks_and_keyboard_entry,
         test_keyboard_speaker_workflow_and_color_cues,
+        test_disclosure_keyboard_and_focus_behavior,
         test_focus_scaling_contrast_and_motion_preferences,
     ):
         print(f"\n{test.__name__}")

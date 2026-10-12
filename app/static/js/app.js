@@ -209,20 +209,46 @@ const LS = (() => {
     const panel = document.getElementById('engine-panel');
     if (!pill || !panel) return;
 
+    const closePanel = (returnFocus = false) => {
+      panel.hidden = true;
+      pill.setAttribute('aria-expanded', 'false');
+      if (returnFocus) pill.focus();
+    };
+
     pill.addEventListener('click', async () => {
       const showing = !panel.hidden;
-      panel.hidden = showing;
-      if (showing) return;
+      if (showing) {
+        closePanel();
+        return;
+      }
+      panel.hidden = false;
+      pill.setAttribute('aria-expanded', 'true');
+      panel.querySelector('[data-engine-action]')?.focus();
+      const error = document.getElementById('engine-error');
+      if (error) {
+        error.textContent = '';
+        error.hidden = true;
+      }
       try {
         renderEngineFacts(await get('/api/status'));
       } catch (err) {
-        panel.innerHTML = `<p class="small">Could not read engine status: ${escapeHtml(err.message)}</p>`;
+        if (error) {
+          error.textContent = `Could not read engine status: ${err.message}`;
+          error.hidden = false;
+        }
+      }
+    });
+
+    panel.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closePanel(true);
       }
     });
 
     document.addEventListener('click', (event) => {
       if (panel.hidden) return;
-      if (!panel.contains(event.target) && !pill.contains(event.target)) panel.hidden = true;
+      if (!panel.contains(event.target) && !pill.contains(event.target)) closePanel();
     });
 
     panel.querySelectorAll('[data-engine-action]').forEach((button) => {

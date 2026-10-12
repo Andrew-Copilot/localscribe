@@ -49,7 +49,8 @@
 
     <!-- Persistent AI status indicator, refreshed by the heartbeat. -->
     <button type="button" id="engine-pill" class="pill pill-unknown"
-            title="Click for engine details" aria-live="polite">
+            title="Click for engine details" aria-live="polite"
+            aria-expanded="false" aria-controls="engine-panel">
       <span class="dot"></span>
       <span class="pill-text">
         <span id="engine-state">Checking engine</span>
@@ -69,9 +70,11 @@
 </main>
 
 <!-- Engine detail popover, populated from /api/status -->
-<div id="engine-panel" class="popover" hidden>
-  <h3>Transcription engine</h3>
+<div id="engine-panel" class="popover" role="region"
+     aria-labelledby="engine-panel-title" hidden>
+  <h3 id="engine-panel-title">Transcription engine</h3>
   <dl id="engine-facts"></dl>
+  <p id="engine-error" class="small" role="status" aria-live="polite" hidden></p>
   <div class="popover-actions">
     <button type="button" class="btn btn-small" data-engine-action="load">Load model now</button>
     <button type="button" class="btn btn-small btn-quiet" data-engine-action="unload">Unload</button>

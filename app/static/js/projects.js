@@ -5,21 +5,35 @@
   const openButtons = ['new-project-btn', 'empty-new']
     .map((id) => document.getElementById(id))
     .filter(Boolean);
+  let opener = null;
 
-  function show(open) {
+  function show(open, trigger = null) {
     if (!form) return;
+    if (open) opener = trigger || opener;
     form.hidden = !open;
+    openButtons.forEach((button) => button.setAttribute('aria-expanded', String(open)));
     if (open) {
       const title = document.getElementById('np-title');
       if (title) title.focus();
+    } else if (opener) {
+      opener.focus();
+      opener = null;
     }
   }
 
-  openButtons.forEach((button) => button.addEventListener('click', () => show(true)));
+  openButtons.forEach((button) =>
+    button.addEventListener('click', (event) => show(true, event.currentTarget)));
   const cancel = document.getElementById('np-cancel');
   if (cancel) cancel.addEventListener('click', () => show(false));
 
   if (form) {
+    form.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        show(false);
+      }
+    });
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const data = new FormData(form);

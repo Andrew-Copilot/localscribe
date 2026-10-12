@@ -321,14 +321,32 @@
   const metaCancel = document.getElementById('meta-cancel');
   const metaState = document.getElementById('meta-state');
 
+  function setMetaFormOpen(open) {
+    if (!metaForm || !editBtn) return;
+    metaForm.hidden = !open;
+    editBtn.setAttribute('aria-expanded', String(open));
+    if (open) {
+      document.getElementById('m-title').focus();
+    } else {
+      editBtn.focus();
+    }
+  }
+
   if (editBtn && metaForm) {
     editBtn.addEventListener('click', () => {
-      metaForm.hidden = !metaForm.hidden;
-      if (!metaForm.hidden) document.getElementById('m-title').focus();
+      setMetaFormOpen(metaForm.hidden);
     });
   }
   if (metaCancel && metaForm) {
-    metaCancel.addEventListener('click', () => { metaForm.hidden = true; });
+    metaCancel.addEventListener('click', () => setMetaFormOpen(false));
+  }
+  if (metaForm) {
+    metaForm.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMetaFormOpen(false);
+      }
+    });
   }
 
   if (metaForm) {

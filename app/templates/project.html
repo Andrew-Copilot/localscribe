@@ -17,7 +17,8 @@
     </p>
   </div>
   <div class="row">
-    <button type="button" class="btn" id="edit-meta-btn">Edit details</button>
+    <button type="button" class="btn" id="edit-meta-btn"
+            aria-expanded="false" aria-controls="meta-form">Edit details</button>
     <button type="button" class="btn" id="export-btn">Export project</button>
     <button type="button" class="btn btn-danger" id="delete-project-btn">Delete</button>
   </div>
@@ -140,8 +141,8 @@
 </div>
 
 <!-- Project metadata: explicit save, unlike the transcript editor's autosave -->
-<form class="card" id="meta-form" hidden>
-  <h2>Project details</h2>
+<form class="card" id="meta-form" aria-labelledby="meta-form-title" hidden>
+  <h2 id="meta-form-title">Project details</h2>
   {% with sensitivity_id="m-sensitivity", sensitivity_value=project.data_sensitivity %}
     {% include "sensitivity_field.html" %}
   {% endwith %}

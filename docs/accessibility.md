@@ -9,6 +9,7 @@ keyboard and assistive-technology testing.
 Run `python -m tests.test_accessibility` for static checks covering:
 
 - Skip navigation, named landmarks, active-page state, and transcript controls.
+- Disclosure relationships, Escape dismissal, and focus return for keyboard users.
 - Keyboard speaker assignment and visible speaker identifiers that do not rely
   on color.
 - Visible focus, scalable base typography, forced-colors and reduced-motion

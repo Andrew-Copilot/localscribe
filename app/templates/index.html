@@ -12,7 +12,8 @@
     </p>
   </div>
   <div class="row">
-    <button type="button" class="btn btn-primary" id="new-project-btn">New project</button>
+    <button type="button" class="btn btn-primary" id="new-project-btn"
+            aria-expanded="false" aria-controls="new-project">New project</button>
     <button type="button" class="btn" id="import-btn">Import project</button>
     <input type="file" id="import-input" accept=".lsproj,.zip" hidden>
   </div>
@@ -32,8 +33,8 @@
 {% endfor %}
 
 <!-- New project form -->
-<form class="card" id="new-project" hidden>
-  <h2>New project</h2>
+<form class="card" id="new-project" aria-labelledby="new-project-title" hidden>
+  <h2 id="new-project-title">New project</h2>
   {% with sensitivity_id="np-sensitivity", sensitivity_value="unknown_treat_as_phi" %}
     {% include "sensitivity_field.html" %}
   {% endwith %}
@@ -90,7 +91,8 @@
   <h3>No projects yet</h3>
   <p>Create a project to start transcribing. Everything stays in this folder on
      your own computer.</p>
-  <button type="button" class="btn btn-primary" id="empty-new">Create your first project</button>
+  <button type="button" class="btn btn-primary" id="empty-new"
+          aria-expanded="false" aria-controls="new-project">Create your first project</button>
 </div>
 {% endif %}
 
