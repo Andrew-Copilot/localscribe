@@ -234,6 +234,11 @@ local snapshots in the app's project data folder and show recent recovery
 activity. Deleting a recording or project and replacing an import offer a
 pre-action snapshot option.
 
+The **Privacy Center** summarizes Offline Lock, local storage and recovery
+activity. Its optional diagnostics report can be previewed before saving; the
+allowlisted report excludes project content, credentials, logs, and absolute
+user paths and is never uploaded.
+
 Exports are now **local v2 snapshots** with a versioned manifest, source-media
 sensitivity declaration, available model/settings provenance, and byte sizes
 and SHA-256 checksums for every artifact. Import verifies v2 snapshots before
