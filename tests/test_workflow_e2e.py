@@ -236,9 +236,23 @@ def test_synthetic_full_workflow():
               (Path(__file__).parent / "test_box_sync.py").is_file())
 
 
+def test_packaged_data_roots_are_external():
+    packaging = ROOT / "packaging"
+    windows = (packaging / "windows" / "build.ps1").read_text(encoding="utf-8")
+    macos = (packaging / "macos" / "build.sh").read_text(encoding="utf-8")
+    linux = (packaging / "linux" / "build-appimage.sh").read_text(encoding="utf-8")
+    check("Windows keeps mutable data in the per-user Local AppData folder",
+          r"LOCALSCRIBE_DATA_DIR=%LOCALAPPDATA%\Local Scribe" in windows)
+    check("macOS keeps mutable data in Application Support",
+          'LOCALSCRIBE_DATA_DIR="$HOME/Library/Application Support/Local Scribe"' in macos)
+    check("Linux keeps mutable data in the XDG user data directory",
+          'LOCALSCRIBE_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/localscribe"' in linux)
+
+
 def main() -> int:
-    print("\ntest_synthetic_full_workflow")
-    test_synthetic_full_workflow()
+    for test in (test_synthetic_full_workflow, test_packaged_data_roots_are_external):
+        print(f"\n{test.__name__}")
+        test()
     print()
     if FAILURES:
         print(f"{len(FAILURES)} check(s) failed: {FAILURES}")

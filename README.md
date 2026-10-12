@@ -115,6 +115,8 @@ packaging/linux/build-appimage.sh     # -> dist/linux/*.AppImage
 
 `.github/workflows/build-installers.yml` builds and smoke-tests all three
 on every push, and attaches them to a GitHub Release when one is published.
+The current unsigned state and future signing/MSIX decision are documented in
+the [distribution feasibility record](docs/distribution-feasibility.md).
 
 ### Giving permissions for the launcher to run
 
