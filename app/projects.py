@@ -22,6 +22,7 @@ Layout::
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -31,6 +32,7 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from .config import PATHS, app_version
 from .sensitivity import DEFAULT_SENSITIVITY, future_backup_gate, normalize_sensitivity, validate_sensitivity
@@ -158,6 +160,7 @@ def write_json(path: Path, payload) -> Path:
 
 def new_project_record(title: str, **fields) -> dict:
     record = {
+        "project_id": uuid4().hex,
         "slug": slugify(title),
         "title": (title or "Untitled project").strip(),
         "description": "",
@@ -530,7 +533,7 @@ def list_outputs(slug: str, doc_id: str) -> list:
 # ---------------------------------------------------------------------------
 
 def export_project(slug: str, dest_dir: Path | None = None, include_media: bool = True) -> Path:
-    """Write a .lsproj archive of an entire project."""
+    """Write a versioned, checksummed .lsproj archive of a project."""
     record = load_project(slug)
     root = project_dir(slug)
     dest_dir = Path(dest_dir or PATHS.logs)
@@ -538,49 +541,175 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
     dest = dest_dir / f"{slug}-{datetime.now().strftime('%Y%m%d-%H%M%S')}{EXPORT_SUFFIX}"
 
     documents = list_documents(slug)
+    project_id = record.get("project_id") or record.get("slug") or slug
     manifest = {
         "format": "localscribe-project",
-        "format_version": 1,
+        "format_version": 2,
         "app_version": app_version(),
         "exported": _now(),
         "slug": slug,
+        "project_id": project_id,
         "title": record.get("title"),
         "includes_media": bool(include_media),
+        "data_sensitivity": record.get("data_sensitivity", DEFAULT_SENSITIVITY),
         "documents": [
             {"id": d["id"], "filename": d.get("filename"), "status": d.get("status")}
             for d in documents
         ],
+        "transcription_provenance": [
+            {
+                "document_id": d["id"],
+                "engine": d.get("engine", {}),
+                "media": d.get("media", {}),
+                "stats": d.get("stats", {}),
+            }
+            for d in documents
+        ],
     }
 
-    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(MANIFEST_FILE, json.dumps(manifest, indent=2))
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
-            relative = path.relative_to(root)
-            if not include_media and relative.parts and relative.parts[0] == "media":
-                continue
-            archive.write(path, str(relative).replace("\\", "/"))
+    paths = []
+    transient_directories = {"cache", "caches", "logs", "__pycache__"}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        archive_name = relative.as_posix()
+        if archive_name == MANIFEST_FILE:
+            continue
+        if any(part.casefold() in transient_directories for part in relative.parts):
+            continue
+        if path.name.casefold() == "waveform.json" or path.name.endswith(".tmp"):
+            continue
+        if not include_media and (
+            (relative.parts and relative.parts[0] == "media")
+            or (len(relative.parts) >= 3 and relative.parts[0] == "documents"
+                and relative.parts[-1].startswith("preview."))
+        ):
+            continue
+        paths.append((path, archive_name))
+
+    project_json = dict(record)
+    project_json["project_id"] = project_id
+    project_json["data_sensitivity"] = record.get(
+        "data_sensitivity", DEFAULT_SENSITIVITY
+    )
+    try:
+        with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as archive:
+            for path, archive_name in paths:
+                if archive_name == PROJECT_FILE:
+                    archive.writestr(
+                        archive_name,
+                        json.dumps(project_json, indent=2, ensure_ascii=False),
+                    )
+                else:
+                    archive.write(path, archive_name)
+
+            for info in archive.infolist():
+                digest = hashlib.sha256()
+                size = 0
+                with archive.open(info) as source:
+                    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                        size += len(chunk)
+                        digest.update(chunk)
+                manifest.setdefault("files", []).append({
+                    "path": info.filename,
+                    "size_bytes": size,
+                    "sha256": digest.hexdigest(),
+                })
+            archive.writestr(MANIFEST_FILE, json.dumps(manifest, indent=2))
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
 
     return dest
+
+
+def _safe_archive_path(name: str) -> Path:
+    normalized = str(name).replace("\\", "/")
+    parts = normalized.rstrip("/").split("/")
+    if (
+        not normalized
+        or normalized.startswith("/")
+        or re.match(r"^[A-Za-z]:", normalized)
+        or any(part in ("", ".", "..") for part in parts)
+    ):
+        raise ProjectError("The project archive contains an unsafe file path.")
+    return Path(*parts)
+
+
+def _validate_archive(archive: zipfile.ZipFile) -> dict:
+    names = archive.namelist()
+    if len(names) != len(set(names)):
+        raise ProjectError("The project archive contains duplicate file paths.")
+    if MANIFEST_FILE not in names:
+        raise ProjectError(
+            "This file is not a Local Scribe project export: its "
+            f"manifest ({MANIFEST_FILE}) is missing."
+        )
+    for name in names:
+        if name != MANIFEST_FILE:
+            _safe_archive_path(name)
+
+    try:
+        manifest = json.loads(archive.read(MANIFEST_FILE).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProjectError("The project archive manifest is not valid JSON.") from exc
+    if not isinstance(manifest, dict) or manifest.get("format") != "localscribe-project":
+        raise ProjectError("That archive was not produced by Local Scribe.")
+
+    version = manifest.get("format_version", 1)
+    if version == 1:
+        return manifest
+    if version != 2:
+        raise ProjectError("This project archive uses an unsupported format version.")
+
+    entries = manifest.get("files")
+    if not isinstance(entries, list):
+        raise ProjectError("The project archive manifest has no valid file list.")
+    expected = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ProjectError("The project archive manifest has an invalid file entry.")
+        name = entry.get("path")
+        path = _safe_archive_path(name) if isinstance(name, str) else None
+        size = entry.get("size_bytes")
+        digest = entry.get("sha256")
+        if (
+            path is None
+            or name == MANIFEST_FILE
+            or name in expected
+            or isinstance(size, bool)
+            or not isinstance(size, int)
+            or size < 0
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise ProjectError("The project archive manifest has an invalid file entry.")
+        expected[name] = (size, digest)
+
+    actual = {name for name in names if name != MANIFEST_FILE and not name.endswith("/")}
+    if actual != set(expected):
+        raise ProjectError("The project archive file list does not match its manifest.")
+
+    for name, (expected_size, expected_digest) in expected.items():
+        digest = hashlib.sha256()
+        size = 0
+        with archive.open(name) as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                size += len(chunk)
+                digest.update(chunk)
+        if size != expected_size or digest.hexdigest() != expected_digest:
+            raise ProjectError(f"The project archive failed its integrity check: {name}.")
+    return manifest
 
 
 def inspect_archive(archive_path: Path) -> dict:
     """Read an archive's manifest without extracting anything."""
     try:
         with zipfile.ZipFile(archive_path) as archive:
-            names = archive.namelist()
-            if MANIFEST_FILE not in names:
-                raise ProjectError(
-                    "This file is not a Local Scribe project export: its "
-                    f"manifest ({MANIFEST_FILE}) is missing."
-                )
-            manifest = json.loads(archive.read(MANIFEST_FILE).decode("utf-8"))
+            manifest = _validate_archive(archive)
     except zipfile.BadZipFile as exc:
         raise ProjectError("That file is not a readable archive.") from exc
-
-    if manifest.get("format") != "localscribe-project":
-        raise ProjectError("That archive was not produced by Local Scribe.")
     return manifest
 
 
@@ -589,61 +718,97 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
 
     ``mode`` is 'rename' (default, keeps both copies) or 'replace'.
     """
-    manifest = inspect_archive(archive_path)
-    incoming = slugify(manifest.get("slug") or manifest.get("title") or "imported")
+    if mode not in ("rename", "replace"):
+        raise ProjectValidationError("Import mode must be 'rename' or 'replace'.")
 
-    with _LOCK:
-        slug = incoming
-        if (PATHS.projects / slug).exists():
-            if mode == "replace":
-                shutil.rmtree(PATHS.projects / slug, ignore_errors=True)
-            else:
-                counter = 2
-                while (PATHS.projects / f"{incoming}-{counter}").exists():
-                    counter += 1
-                slug = f"{incoming}-{counter}"
-
-        target = project_dir(slug)
-        target.mkdir(parents=True, exist_ok=True)
-
+    PATHS.projects.mkdir(parents=True, exist_ok=True)
+    stage = PATHS.projects / f".import-{uuid4().hex}"
+    backup = None
+    try:
         with zipfile.ZipFile(archive_path) as archive:
-            for name in archive.namelist():
-                if name == MANIFEST_FILE:
-                    continue
-                # Refuse absolute paths and traversal, whatever the archive says.
-                relative = Path(name.replace("\\", "/"))
-                if relative.is_absolute() or ".." in relative.parts:
-                    continue
-                destination = (target / relative).resolve()
-                if not str(destination).startswith(str(target.resolve())):
-                    continue
-                if name.endswith("/"):
-                    destination.mkdir(parents=True, exist_ok=True)
-                    continue
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(name) as src, open(destination, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
+            manifest = _validate_archive(archive)
+            incoming = slugify(manifest.get("slug") or manifest.get("title") or "imported")
+            with _LOCK:
+                slug = incoming
+                existing = (PATHS.projects / slug).exists()
+                if existing and mode == "rename":
+                    counter = 2
+                    while (PATHS.projects / f"{incoming}-{counter}").exists():
+                        counter += 1
+                    slug = f"{incoming}-{counter}"
+                target = project_dir(slug)
+                stage.mkdir()
 
-        record = read_json(target / PROJECT_FILE)
-        if record is None:
-            shutil.rmtree(target, ignore_errors=True)
-            raise ProjectError(
-                "The archive did not contain a project.json, so it could not "
-                "be imported."
-            )
-        record["slug"] = slug
-        _normalize_project(record)
-        if slug != incoming:
-            record["title"] = f"{record.get('title') or slug} (imported)"
-        record["updated"] = _now()
-        write_json(target / PROJECT_FILE, record)
+                expected = {
+                    entry["path"]: (entry["size_bytes"], entry["sha256"])
+                    for entry in manifest.get("files", [])
+                }
+                for info in archive.infolist():
+                    name = info.filename
+                    if name == MANIFEST_FILE:
+                        continue
+                    relative = _safe_archive_path(name)
+                    destination = stage / relative
+                    if info.is_dir():
+                        destination.mkdir(parents=True, exist_ok=True)
+                        continue
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    digest = hashlib.sha256()
+                    size = 0
+                    with archive.open(info) as src, destination.open("wb") as dst:
+                        for chunk in iter(lambda: src.read(1024 * 1024), b""):
+                            size += len(chunk)
+                            digest.update(chunk)
+                            dst.write(chunk)
+                    if name in expected and (
+                        size != expected[name][0] or digest.hexdigest() != expected[name][1]
+                    ):
+                        raise ProjectError(
+                            f"The project archive failed its integrity check: {name}."
+                        )
 
-        for directory in ("media", "documents"):
-            (target / directory).mkdir(parents=True, exist_ok=True)
+                record = read_json(stage / PROJECT_FILE)
+                if record is None:
+                    raise ProjectError(
+                        "The archive did not contain a project.json, so it could not "
+                        "be imported."
+                    )
+                record["slug"] = slug
+                record["project_id"] = (
+                    manifest.get("project_id") or record.get("project_id") or uuid4().hex
+                )
+                record["data_sensitivity"] = manifest.get(
+                    "data_sensitivity", record.get("data_sensitivity")
+                )
+                _normalize_project(record)
+                if slug != incoming:
+                    record["title"] = f"{record.get('title') or slug} (imported)"
+                record["updated"] = _now()
+                write_json(stage / PROJECT_FILE, record)
 
-        record["stats"] = project_stats(slug)
-        record["imported_from"] = Path(archive_path).name
-        return record
+                for directory in ("media", "documents"):
+                    (stage / directory).mkdir(parents=True, exist_ok=True)
+
+                if target.exists():
+                    backup = PATHS.projects / f".backup-{uuid4().hex}"
+                    target.replace(backup)
+                try:
+                    stage.replace(target)
+                except Exception:
+                    if backup is not None and backup.exists():
+                        backup.replace(target)
+                    raise
+                if backup is not None:
+                    shutil.rmtree(backup)
+
+                record["stats"] = project_stats(slug)
+                record["imported_from"] = Path(archive_path).name
+                return record
+    except zipfile.BadZipFile as exc:
+        raise ProjectError("That file is not a readable archive.") from exc
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage, ignore_errors=True)
 
 
 def reveal(path: Path) -> bool:
