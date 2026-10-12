@@ -84,6 +84,7 @@ def test_versioned_export_and_restore():
         check("restore preserves project identity and sensitivity",
               imported["project_id"] == project["project_id"]
               and imported["data_sensitivity"] == "may_contain_phi")
+        check("restore reports verified integrity", imported["archive_integrity_verified"])
         check("restore retains transcript",
               (projects.document_dir(imported["slug"], doc["id"]) / projects.TRANSCRIPT_FILE).exists())
 
@@ -97,6 +98,8 @@ def test_tampering_is_rejected_before_replace():
         tampered_path = root / "tampered.lsproj"
         target_name = f"documents/{doc['id']}/{projects.DOCUMENT_FILE}"
         with zipfile.ZipFile(archive_path) as source, zipfile.ZipFile(tampered_path, "w") as target:
+            check("media-included archive contains source media",
+                  any(name.startswith("media/") for name in source.namelist()))
             for info in source.infolist():
                 data = source.read(info.filename)
                 if info.filename == target_name:
@@ -137,6 +140,8 @@ def test_legacy_archive_and_unsafe_paths():
         check("legacy archive receives conservative defaults",
               imported["data_sensitivity"] == projects.DEFAULT_SENSITIVITY
               and bool(imported["project_id"]))
+        check("legacy import reports unavailable checksum assurance",
+              not imported["archive_integrity_verified"])
 
         unsafe = root / "unsafe.lsproj"
         with zipfile.ZipFile(unsafe, "w") as archive:

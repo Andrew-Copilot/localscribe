@@ -21,8 +21,8 @@ Layout::
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -578,7 +578,7 @@ def export_project(slug: str, dest_dir: Path | None = None, include_media: bool 
             continue
         if any(part.casefold() in transient_directories for part in relative.parts):
             continue
-        if path.name.casefold() == "waveform.json" or path.name.endswith(".tmp"):
+        if path.name.casefold() == "waveform.json" or path.name.casefold().endswith(".tmp"):
             continue
         if not include_media and (
             (relative.parts and relative.parts[0] == "media")
@@ -658,7 +658,10 @@ def _validate_archive(archive: zipfile.ZipFile) -> dict:
         raise ProjectError("That archive was not produced by Local Scribe.")
 
     version = manifest.get("format_version", 1)
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ProjectError("This project archive uses an unsupported format version.")
     if version == 1:
+        manifest["integrity_verified"] = False
         return manifest
     if version != 2:
         raise ProjectError("This project archive uses an unsupported format version.")
@@ -700,6 +703,7 @@ def _validate_archive(archive: zipfile.ZipFile) -> dict:
                 digest.update(chunk)
         if size != expected_size or digest.hexdigest() != expected_digest:
             raise ProjectError(f"The project archive failed its integrity check: {name}.")
+    manifest["integrity_verified"] = True
     return manifest
 
 
@@ -803,6 +807,7 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
 
                 record["stats"] = project_stats(slug)
                 record["imported_from"] = Path(archive_path).name
+                record["archive_integrity_verified"] = manifest["integrity_verified"]
                 return record
     except zipfile.BadZipFile as exc:
         raise ProjectError("That file is not a readable archive.") from exc

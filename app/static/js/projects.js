@@ -68,7 +68,13 @@
 
       try {
         const result = await LS.request('POST', '/api/projects/import', body);
-        LS.toast(`Imported "${result.project.title}".`, 'ok');
+        if (result.project.archive_integrity_verified) {
+          LS.toast(`Imported "${result.project.title}".`, 'ok');
+        } else {
+          window.alert(
+            `Imported "${result.project.title}", but this legacy archive could not be checksum-verified.`
+          );
+        }
         location.href = `/project/${result.project.slug}`;
       } catch (err) {
         LS.toast(`Import failed: ${err.message}`, 'error', 10000);
