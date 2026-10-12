@@ -57,6 +57,28 @@ jobs:
       - name: Stop the app
         if: always()
         run: pkill -f "Local Scribe.app" || true
+      - name: Smoke test - replacing the app preserves per-user project data
+        run: |
+          set -eu
+          app="dist/macos/Local Scribe.app"
+          data="$HOME/Library/Application Support/Local Scribe/projects"
+          mkdir -p "$data"
+          printf '%s' 'keep across app update' > "$data/upgrade-regression-sentinel.txt"
+          cp -R "$app" "$RUNNER_TEMP/Local Scribe.app.new"
+          rm -rf "$app"
+          mv "$RUNNER_TEMP/Local Scribe.app.new" "$app"
+          test "$(cat "$data/upgrade-regression-sentinel.txt")" = "keep across app update"
+          "$app/Contents/MacOS/LocalScribe" &
+          for i in $(seq 1 120); do
+            if curl -sf http://127.0.0.1:43707/api/instance > /dev/null; then
+              echo "Replaced app responded after ${i}x2s"; exit 0
+            fi
+            sleep 2
+          done
+          echo "Replaced app never responded" >&2; exit 1
+      - name: Stop replaced app
+        if: always()
+        run: pkill -f "Local Scribe.app" || true
       - uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
@@ -171,6 +193,27 @@ jobs:
           done
           echo "Server never responded" >&2; exit 1
       - name: Stop the app
+        if: always()
+        run: pkill -f app.desktop || true
+      - name: Smoke test - replacing the AppImage preserves per-user project data
+        run: |
+          set -eu
+          appimage=$(echo dist/linux/*.AppImage)
+          data="${XDG_DATA_HOME:-$HOME/.local/share}/localscribe/projects"
+          mkdir -p "$data"
+          printf '%s' 'keep across app update' > "$data/upgrade-regression-sentinel.txt"
+          cp "$appimage" "$RUNNER_TEMP/LocalScribe.AppImage.new"
+          mv "$RUNNER_TEMP/LocalScribe.AppImage.new" "$appimage"
+          test "$(cat "$data/upgrade-regression-sentinel.txt")" = "keep across app update"
+          "$appimage" --appimage-extract-and-run &
+          for i in $(seq 1 120); do
+            if curl -sf http://127.0.0.1:43707/api/instance > /dev/null; then
+              echo "Replaced AppImage responded after ${i}x2s"; exit 0
+            fi
+            sleep 2
+          done
+          echo "Replaced AppImage never responded" >&2; exit 1
+      - name: Stop replaced AppImage
         if: always()
         run: pkill -f app.desktop || true
       - uses: actions/upload-artifact@v4
