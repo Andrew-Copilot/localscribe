@@ -152,6 +152,15 @@ def make_segment(
         "no_speech_prob": meta.get("no_speech_prob"),
         "compression_ratio": meta.get("compression_ratio"),
         "temperature": meta.get("temperature"),
+        "review": (
+            {
+                "flagged": bool(meta["review"].get("flagged")),
+                "changed": bool(meta["review"].get("changed")),
+                "resolved": [],
+            }
+            if isinstance(meta.get("review"), dict)
+            else {"flagged": False, "changed": False, "resolved": []}
+        ),
     }
     return seg
 
@@ -389,6 +398,7 @@ def set_roster(doc: dict, roster) -> dict:
             previous = speaker_by_id(doc, current)
             lost[current] = (previous or {}).get("name", current)
             seg["speaker_id"] = ""
+            _clear_review_resolutions(seg)
             orphaned += 1
 
     doc["speakers"] = cleaned
@@ -430,6 +440,7 @@ def assign_speaker(doc: dict, segment_ids, speaker_id: str) -> int:
             continue
         if (seg.get("speaker_id") or "") != (speaker_id or ""):
             seg["speaker_id"] = speaker_id or ""
+            _clear_review_resolutions(seg)
             changed += 1
 
     if changed:
@@ -639,6 +650,23 @@ def normalise(doc: dict) -> dict:
         if not (seg.get("text") or "").strip():
             seg["text"] = " ".join(w["w"] for w in cleaned).strip()
         seg["speaker"] = (seg.get("speaker") or "").strip()
+        review = seg.get("review")
+        legacy_review = not isinstance(review, dict)
+        if not isinstance(review, dict):
+            review = {}
+        resolved = review.get("resolved")
+        if not isinstance(resolved, list):
+            resolved = []
+        seg["review"] = {
+            "flagged": bool(review.get("flagged")),
+            "changed": bool(review.get("changed"))
+            or (legacy_review and bool(seg.get("stale_timings"))),
+            "resolved": sorted({
+                str(category) for category in resolved
+                if isinstance(category, str)
+                and category in {"low_confidence", "artifact", "unassigned", "changed"}
+            }),
+        }
 
     if duration and previous_end > duration:
         doc["duration"] = round(previous_end, 3)
@@ -653,6 +681,14 @@ def normalise(doc: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Edit application
 # ---------------------------------------------------------------------------
+
+def _clear_review_resolutions(seg: dict) -> None:
+    state = seg.get("review")
+    if not isinstance(state, dict):
+        state = {}
+        seg["review"] = state
+    state["resolved"] = []
+    state["changed"] = True
 
 
 def apply_edits(doc: dict, edits: list) -> dict:
@@ -682,6 +718,7 @@ def apply_edits(doc: dict, edits: list) -> dict:
                 wanted = ""
             if wanted != (seg.get("speaker_id") or ""):
                 seg["speaker_id"] = wanted
+                _clear_review_resolutions(seg)
                 touched += 1
 
         elif "speaker" in edit:
@@ -693,6 +730,7 @@ def apply_edits(doc: dict, edits: list) -> dict:
             if not name:
                 if seg.get("speaker_id"):
                     seg["speaker_id"] = ""
+                    _clear_review_resolutions(seg)
                     touched += 1
             else:
                 match = next(
@@ -704,6 +742,7 @@ def apply_edits(doc: dict, edits: list) -> dict:
                     doc.setdefault("speakers", []).append(match)
                 if seg.get("speaker_id") != match["id"]:
                     seg["speaker_id"] = match["id"]
+                    _clear_review_resolutions(seg)
                     touched += 1
 
         if "text" in edit:
@@ -711,6 +750,7 @@ def apply_edits(doc: dict, edits: list) -> dict:
             if new_text != segment_text(seg):
                 seg["text"] = new_text
                 seg["edited"] = True
+                _clear_review_resolutions(seg)
                 if new_text:
                     seg["stale_timings"] = True
                 else:
@@ -743,6 +783,10 @@ def split_segment(doc: dict, seg_id: int, word_index: int) -> dict:
             speaker=seg.get("speaker", ""), edited=True,
             avg_logprob=seg.get("avg_logprob"),
             no_speech_prob=seg.get("no_speech_prob"),
+            review={
+                "flagged": bool((seg.get("review") or {}).get("flagged")),
+                "changed": True,
+            },
         )
         second = make_segment(
             seg["id"] + 1, tail[0]["start"], tail[-1]["end"],
@@ -778,6 +822,11 @@ def merge_segment(doc: dict, seg_id: int) -> dict:
             edited=True,
             avg_logprob=seg.get("avg_logprob"),
             no_speech_prob=seg.get("no_speech_prob"),
+            review={
+                "flagged": bool((seg.get("review") or {}).get("flagged"))
+                or bool((nxt.get("review") or {}).get("flagged")),
+                "changed": True,
+            },
         )
         segments[position:position + 2] = [merged]
         doc["human_edited"] = True

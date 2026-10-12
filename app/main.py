@@ -36,6 +36,7 @@ from . import (
     media,
     proofread,
     projects,
+    review,
     update_check,
     winlibs,
 )
@@ -1235,6 +1236,27 @@ async def api_assign_speaker(slug: str, doc_id: str, request: Request):
         ],
         "summary": summary(doc),
     }
+
+
+@app.post("/api/projects/{slug}/documents/{doc_id}/review")
+async def api_review_action(slug: str, doc_id: str, request: Request):
+    """Persist a queue resolution or a manual segment flag in the transcript."""
+    payload = await request.json()
+    doc = _load_doc_or_404(slug, doc_id)
+    try:
+        state = review.apply_action(
+            doc,
+            payload.get("segment_id"),
+            str(payload.get("category") or ""),
+            str(payload.get("action") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    projects.save_transcript(
+        slug, doc_id, doc, revision=False,
+        keep=int(SETTINGS.get("autosave_revisions") or 20),
+    )
+    return {"review": state, "updated": doc.get("updated")}
 
 
 @app.post("/api/projects/{slug}/documents/{doc_id}/proofread")

@@ -152,6 +152,7 @@
     const classes = ['seg'];
     if (seg.edited) classes.push('edited');
     if (seg.stale_timings) classes.push('stale');
+    const flagged = Boolean(seg.review && seg.review.flagged);
 
     return `${marker}
       <div class="${classes.join(' ')}" data-id="${seg.id}">
@@ -162,6 +163,8 @@
           <div class="seg-tools">
             <button type="button" data-act="loop" title="Loop this segment">loop</button>
             <button type="button" data-act="merge" title="Merge with the next segment">merge</button>
+            <button type="button" data-act="flag" aria-pressed="${flagged}"
+                    title="${flagged ? 'Remove review flag' : 'Flag this segment for review'}">${flagged ? 'flagged' : 'flag'}</button>
           </div>
         </div>
         <div class="seg-body">
@@ -260,6 +263,14 @@
   }, 1400);
 
   function queueEdit(id, change) {
+    const seg = segmentById(id);
+    if (seg && (Object.prototype.hasOwnProperty.call(change, 'text')
+        || Object.prototype.hasOwnProperty.call(change, 'speaker')
+        || Object.prototype.hasOwnProperty.call(change, 'speaker_id'))) {
+      if (!seg.review) seg.review = { flagged: false, changed: false, resolved: [] };
+      seg.review.resolved = [];
+      seg.review.changed = true;
+    }
     pendingEdits.set(Number(id), { ...(pendingEdits.get(Number(id)) || {}), ...change });
     setSaveState('Unsaved changes', 'dirty');
     flush();
@@ -298,6 +309,7 @@
       const id = Number(segEl.dataset.id);
       if (tool.dataset.act === 'loop') toggleLoop(id);
       if (tool.dataset.act === 'merge') mergeSegment(id);
+      if (tool.dataset.act === 'flag' && window.LSReview) window.LSReview.toggleFlag(id);
       return;
     }
 
@@ -555,6 +567,9 @@
       seg.speaker_id = speakerId || '';
       const speaker = speakerById(seg.speaker_id);
       seg.speaker = speaker ? speaker.name : '';
+      if (!seg.review) seg.review = { flagged: false, changed: false, resolved: [] };
+      seg.review.resolved = [];
+      seg.review.changed = true;
     });
     render();
 

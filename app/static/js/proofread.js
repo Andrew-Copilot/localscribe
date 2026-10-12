@@ -68,6 +68,9 @@
         // more, and seg.text no longer changes while typing (see above).
         const sent = wanted.find((w) => w.id === id);
         checked.set(id, sent ? sent.text : '');
+        document.dispatchEvent(new CustomEvent('ls:proofread', {
+          detail: { segmentId: id, text: sent ? sent.text : '', issues: list },
+        }));
       });
       paint();
       updateCount();
@@ -204,6 +207,7 @@
       }
     } finally {
       sweeping = false;
+      document.dispatchEvent(new CustomEvent('ls:proofread-complete'));
     }
   }
   const debouncedSweep = LS.debounce(sweepAll, 600);

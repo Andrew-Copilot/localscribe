@@ -35,7 +35,10 @@ quality-of-life features like being able to quickly replay segments,
 visualizing words the AI system has low confidence in categorizing, and
 having timestamps clearly marked. It is intended to do the hard work of
 getting a first draft done and increasing the speed by which humans validate
-and de-identify transcripts for research. All data are protected as well,
+and de-identify transcripts for research. Review Mode queues uncertain,
+possibly-artifactual, unassigned, flagged, and recently changed segments;
+its progress travels with project exports. See the
+[Review Mode guide](docs/review-mode.md). All data are protected as well,
 giving you assurance for your subjects' privacy.
 
 Local Scribe transcribes audio and video with OpenAI's Whisper models entirely
