@@ -36,6 +36,7 @@ from . import (
     media,
     proofread,
     projects,
+    ranged,
     review,
     update_check,
     winlibs,
@@ -1489,47 +1490,7 @@ def _ranged_file(path: Path, media_type: str, request: Request) -> Response:
     clicking a word near the end of a two-hour interview would download the
     whole file first.
     """
-    size = path.stat().st_size
-    range_header = request.headers.get("range")
-
-    if not range_header or not range_header.startswith("bytes="):
-        return FileResponse(path, media_type=media_type, headers={
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "no-store",
-        })
-
-    spec = range_header.split("=", 1)[1].split(",")[0].strip()
-    start_text, _, end_text = spec.partition("-")
-    try:
-        start = int(start_text) if start_text else 0
-        end = int(end_text) if end_text else size - 1
-    except ValueError:
-        start, end = 0, size - 1
-
-    start = max(0, min(start, size - 1))
-    end = max(start, min(end, size - 1))
-    length = end - start + 1
-
-    def iterator():
-        with open(path, "rb") as handle:
-            handle.seek(start)
-            remaining = length
-            while remaining > 0:
-                chunk = handle.read(min(256 * 1024, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield chunk
-
-    return StreamingResponse(
-        iterator(), status_code=206, media_type=media_type,
-        headers={
-            "Content-Range": f"bytes {start}-{end}/{size}",
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(length),
-            "Cache-Control": "no-store",
-        },
-    )
+    return ranged.ranged_file(path, media_type, request.headers.get("range"))
 
 
 @app.get("/api/projects/{slug}/documents/{doc_id}/waveform")

@@ -30,6 +30,9 @@
   const followToggle = document.getElementById('follow-play');
   const playerCard = document.querySelector('.player-card');
   const findbarEl = document.getElementById('findbar');
+  const preRoll = document.getElementById('pre-roll');
+  const postRoll = document.getElementById('post-roll');
+  const zoomLabel = document.getElementById('zoom-level');
 
   let transcript = D.transcript;
   let roster = (D.speakers || []).slice();
@@ -38,6 +41,8 @@
   let activeSegment = -1;
   let editingSegment = -1;
   let loopRange = null;        // {start, end} while looping a segment
+  let stopAt = null;
+  let zoom = 1;
   const pendingEdits = new Map();   // segment id -> {text?, speaker?}
 
   /* ------------------------------------------------------------ rendering */
@@ -137,6 +142,7 @@
     return `<div class="turn-head">
         ${name}
         <button type="button" class="seg-stamp" data-play="${turn.segments[0].start}"
+                data-end="${turn.segments[turn.segments.length - 1].end}"
                 title="Play this turn from the start">${stamp(turn.segments[0].start)}</button>
         ${chipsHtml(turn)}
       </div>`;
@@ -157,11 +163,12 @@
     return `${marker}
       <div class="${classes.join(' ')}" data-id="${seg.id}">
         <div class="seg-time">
-          <button type="button" class="seg-stamp" data-play="${seg.start}"
+          <button type="button" class="seg-stamp" data-play="${seg.start}" data-end="${seg.end}"
                   title="Play from ${stamp(seg.start)}">${stamp(seg.start)}</button>
           <span class="seg-dur">${length.toFixed(1)}s</span>
           <div class="seg-tools">
             <button type="button" data-act="loop" title="Loop this segment">loop</button>
+            <button type="button" data-act="replay" title="Replay this segment with pre/post-roll">replay</button>
             <button type="button" data-act="merge" title="Merge with the next segment">merge</button>
             <button type="button" data-act="flag" aria-pressed="${flagged}"
                     title="${flagged ? 'Remove review flag' : 'Flag this segment for review'}">${flagged ? 'flagged' : 'flag'}</button>
@@ -292,7 +299,7 @@
   host.addEventListener('click', (event) => {
     const stampBtn = event.target.closest('[data-play]');
     if (stampBtn) {
-      playFrom(Number(stampBtn.dataset.play));
+      playRange(Number(stampBtn.dataset.play), Number(stampBtn.dataset.end));
       return;
     }
 
@@ -308,6 +315,7 @@
       const segEl = tool.closest('.seg');
       const id = Number(segEl.dataset.id);
       if (tool.dataset.act === 'loop') toggleLoop(id);
+      if (tool.dataset.act === 'replay') playSegment(id);
       if (tool.dataset.act === 'merge') mergeSegment(id);
       if (tool.dataset.act === 'flag' && window.LSReview) window.LSReview.toggleFlag(id);
       return;
@@ -319,7 +327,7 @@
     if (word) {
       const segEl = word.closest('.seg');
       if (Number(segEl.dataset.id) === editingSegment) return;
-      playFrom(Number(word.dataset.start));
+      playRange(Number(word.dataset.start), Number(word.dataset.end));
       markPlayingWord(word);
 
       // event.detail is the click count: 2 here means this is the second
@@ -601,7 +609,7 @@
 
   document.addEventListener('keydown', (event) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.target.matches('input, textarea, [contenteditable="true"]')) return;
+    if (event.target.closest('input, textarea, select, button, [contenteditable="true"]')) return;
     if (!/^[1-9]$/.test(event.key)) return;
 
     const speaker = roster[Number(event.key) - 1];
@@ -616,11 +624,45 @@
 
   /* -------------------------------------------------------------- playback */
 
+  function mediaDuration() {
+    return Math.max(0, Number(duration) || Number(audio && audio.duration) || 0);
+  }
+
+  function seekTo(seconds) {
+    if (!audio) return 0;
+    audio.currentTime = LSPlayback.seekTarget(seconds, mediaDuration());
+    return audio.currentTime;
+  }
+
   function playFrom(seconds) {
     if (!audio) return;
-    audio.currentTime = Math.max(0, Math.min(seconds, duration || audio.duration || 0));
+    stopAt = null;
+    seekTo(seconds);
     const promise = audio.play();
     if (promise && promise.catch) promise.catch(() => { /* autoplay refusal */ });
+  }
+
+  function playRange(start, end) {
+    if (!audio) return;
+    const pre = Number(preRoll && preRoll.value) || 0;
+    const post = Number(postRoll && postRoll.value) || 0;
+    const rangeEnd = Number(end);
+    const range = LSPlayback.rangeWithRoll(start, rangeEnd, pre, post, mediaDuration());
+    stopAt = range.end;
+    seekTo(range.start);
+    const promise = audio.play();
+    if (promise && promise.catch) promise.catch(() => { /* autoplay refusal */ });
+  }
+
+  function playSegment(id) {
+    const seg = segmentById(id);
+    if (seg) playRange(seg.start, seg.end);
+  }
+
+  function replayActiveSegment() {
+    const seg = segmentById(activeSegment);
+    if (seg) playSegment(seg.id);
+    else LS.toast('Play or select a transcript segment first.', 'info', 2200);
   }
 
   function toggleLoop(id) {
@@ -629,10 +671,12 @@
     if (loopRange && loopRange.id === id) {
       loopRange = null;
       if (loopToggle) loopToggle.checked = false;
+      stopAt = null;
       LS.toast('Loop off.', 'info', 2200);
       return;
     }
     loopRange = { id, start: seg.start, end: seg.end };
+    stopAt = null;
     if (loopToggle) loopToggle.checked = true;
     playFrom(seg.start);
     LS.toast(`Looping ${stamp(seg.start)} to ${stamp(seg.end)}.`, 'info', 2600);
@@ -654,6 +698,12 @@
         audio.currentTime = loopRange.start;
         return;
       }
+      if (stopAt !== null && t >= stopAt) {
+        audio.pause();
+        seekTo(stopAt);
+        stopAt = null;
+        return;
+      }
 
       if (timeReadout) {
         timeReadout.textContent =
@@ -666,8 +716,11 @@
 
     audio.addEventListener('loadedmetadata', () => {
       if (!duration || !Number.isFinite(duration)) duration = audio.duration;
+      if (ribbon) ribbon.setAttribute('aria-valuemax', String(mediaDuration()));
       drawRibbon(0);
     });
+    audio.addEventListener('seeked', () => drawRibbon(audio.currentTime));
+    audio.addEventListener('ended', () => { stopAt = null; });
 
     audio.addEventListener('error', () => {
       LS.toast(
@@ -679,13 +732,21 @@
     const playBtn = document.getElementById('btn-play');
     if (playBtn) {
       playBtn.addEventListener('click', () => (audio.paused ? audio.play() : audio.pause()));
-      audio.addEventListener('play', () => { playBtn.textContent = 'Pause'; });
-      audio.addEventListener('pause', () => { playBtn.textContent = 'Play'; });
+      audio.addEventListener('play', () => {
+        playBtn.textContent = 'Pause';
+        playBtn.setAttribute('aria-label', 'Pause audio');
+      });
+      audio.addEventListener('pause', () => {
+        playBtn.textContent = 'Play';
+        playBtn.setAttribute('aria-label', 'Play audio');
+      });
     }
     const back = document.getElementById('btn-back');
     const fwd = document.getElementById('btn-fwd');
-    if (back) back.addEventListener('click', () => { audio.currentTime -= 2; });
-    if (fwd) fwd.addEventListener('click', () => { audio.currentTime += 2; });
+    if (back) back.addEventListener('click', () => seekTo(audio.currentTime - 2));
+    if (fwd) fwd.addEventListener('click', () => seekTo(audio.currentTime + 2));
+    const replay = document.getElementById('btn-replay');
+    if (replay) replay.addEventListener('click', replayActiveSegment);
 
     const rate = document.getElementById('rate');
     if (rate) rate.addEventListener('change', () => { audio.playbackRate = Number(rate.value); });
@@ -750,6 +811,21 @@
     drawRibbon(0);
   }
 
+  function visibleWindow(position) {
+    const total = mediaDuration() || 1;
+    const span = total / zoom;
+    const center = Number(position) || 0;
+    const start = Math.max(0, Math.min(total - span, center - span / 2));
+    return { start, end: start + span, span };
+  }
+
+  function setZoom(next) {
+    zoom = Math.max(1, Math.min(8, next));
+    if (zoomLabel) zoomLabel.textContent = zoom === 1 ? 'Full recording' : `${zoom}×`;
+    const position = audio ? audio.currentTime : 0;
+    drawRibbon(position);
+  }
+
   function drawRibbon(position) {
     if (!ribbon) return;
     const ratio = window.devicePixelRatio || 1;
@@ -765,18 +841,23 @@
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
-    const total = duration || 1;
+    const total = mediaDuration() || 1;
+    const view = visibleWindow(position);
+    const xForTime = (time) => ((time - view.start) / view.span) * width;
     const mid = height / 2;
 
     // Waveform
     if (peaks.length) {
       ctx.fillStyle = '#c7d2d4';
-      const step = width / peaks.length;
-      const barWidth = Math.max(1, step * 0.85);
-      peaks.forEach((peak, index) => {
+      const first = Math.max(0, Math.floor((view.start / total) * peaks.length));
+      const last = Math.min(peaks.length, Math.ceil((view.end / total) * peaks.length));
+      for (let index = first; index < last; index += 1) {
+        const peak = peaks[index];
+        const x = xForTime((index / peaks.length) * total);
+        const step = (total / peaks.length / view.span) * width;
         const h = Math.max(1, peak * (height * 0.82));
-        ctx.fillRect(index * step, mid - h / 2, barWidth, h);
-      });
+        ctx.fillRect(x, mid - h / 2, Math.max(1, step * 0.85), h);
+      }
     } else {
       ctx.fillStyle = '#e7e5da';
       ctx.fillRect(0, mid - 1, width, 2);
@@ -786,7 +867,8 @@
     ctx.strokeStyle = 'rgba(15,118,110,.22)';
     ctx.lineWidth = 1;
     transcript.segments.forEach((seg) => {
-      const x = (seg.start / total) * width;
+      if (seg.start < view.start || seg.start > view.end) return;
+      const x = xForTime(seg.start);
       ctx.beginPath();
       ctx.moveTo(x, 4);
       ctx.lineTo(x, height - 4);
@@ -796,41 +878,55 @@
     // Active segment shading
     const active = segmentById(activeSegment);
     if (active) {
-      const x1 = (active.start / total) * width;
-      const x2 = (active.end / total) * width;
-      ctx.fillStyle = 'rgba(15,118,110,.13)';
-      ctx.fillRect(x1, 0, Math.max(2, x2 - x1), height);
+      const x1 = xForTime(Math.max(view.start, active.start));
+      const x2 = xForTime(Math.min(view.end, active.end));
+      if (x2 > x1) {
+        ctx.fillStyle = 'rgba(15,118,110,.13)';
+        ctx.fillRect(x1, 0, Math.max(2, x2 - x1), height);
+      }
     }
 
     // Loop region
     if (loopRange) {
-      const x1 = (loopRange.start / total) * width;
-      const x2 = (loopRange.end / total) * width;
+      const x1 = xForTime(Math.max(view.start, loopRange.start));
+      const x2 = xForTime(Math.min(view.end, loopRange.end));
       ctx.strokeStyle = 'rgba(154,91,0,.75)';
       ctx.lineWidth = 2;
-      ctx.strokeRect(x1, 2, Math.max(3, x2 - x1), height - 4);
+      if (x2 > x1) ctx.strokeRect(x1, 2, Math.max(3, x2 - x1), height - 4);
     }
 
     // Playhead
-    const x = (Math.max(0, position) / total) * width;
+    const x = xForTime(Math.max(view.start, Math.min(view.end, Number(position) || 0)));
     ctx.strokeStyle = '#a32020';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(x, 0);
     ctx.lineTo(x, height);
     ctx.stroke();
+    ribbon.setAttribute('aria-valuemax', String(total));
+    ribbon.setAttribute('aria-valuenow', String(Math.max(0, Math.min(total, Number(position) || 0))));
+    ribbon.setAttribute('aria-valuetext', `${LS.clock(position, false)} of ${LS.clock(total, false)}`);
   }
 
   if (ribbon) {
     ribbon.addEventListener('click', (event) => {
       const box = ribbon.getBoundingClientRect();
-      const fraction = (event.clientX - box.left) / box.width;
-      playFrom(fraction * (duration || 0));
+      if (!box.width) return;
+      ribbon.focus();
+      const fraction = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
+      const view = visibleWindow(audio ? audio.currentTime : 0);
+      playFrom(LSPlayback.timeAtFraction(fraction, view.start, view.span));
     });
     window.addEventListener('resize', LS.debounce(() => {
       drawRibbon(audio ? audio.currentTime : 0);
     }, 120));
   }
+  const zoomOut = document.getElementById('zoom-out');
+  const zoomIn = document.getElementById('zoom-in');
+  const zoomFit = document.getElementById('zoom-fit');
+  if (zoomOut) zoomOut.addEventListener('click', () => setZoom(zoom / 2));
+  if (zoomIn) zoomIn.addEventListener('click', () => setZoom(zoom * 2));
+  if (zoomFit) zoomFit.addEventListener('click', () => setZoom(1));
 
   /* Keeps the find bar (which is `position: sticky`, see app.css) pinned
      just below the player card rather than under the very top of the
@@ -852,8 +948,8 @@
   /* ------------------------------------------------------------- shortcuts */
 
   document.addEventListener('keydown', (event) => {
-    const typing = event.target.matches('input, textarea, [contenteditable="true"]');
-    if (typing) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.target.closest('input, textarea, select, button, [contenteditable="true"]')) return;
     if (!audio) return;
 
     if (event.code === 'Space') {
@@ -861,10 +957,29 @@
       if (audio.paused) audio.play(); else audio.pause();
     } else if (event.key === 'ArrowLeft') {
       event.preventDefault();
-      audio.currentTime -= event.shiftKey ? 5 : 2;
+      seekTo(audio.currentTime - (event.shiftKey ? 5 : 2));
     } else if (event.key === 'ArrowRight') {
       event.preventDefault();
-      audio.currentTime += event.shiftKey ? 5 : 2;
+      seekTo(audio.currentTime + (event.shiftKey ? 5 : 2));
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      playFrom(0);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      playFrom(mediaDuration());
+    } else if (event.key.toLowerCase() === 'r') {
+      event.preventDefault();
+      replayActiveSegment();
+    } else if (event.key.toLowerCase() === 'l') {
+      event.preventDefault();
+      const seg = segmentById(activeSegment);
+      if (seg) toggleLoop(seg.id);
+    } else if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      setZoom(zoom * 2);
+    } else if (event.key === '-' || event.key === '_') {
+      event.preventDefault();
+      setZoom(zoom / 2);
     }
   });
 

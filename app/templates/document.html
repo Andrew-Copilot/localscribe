@@ -43,9 +43,14 @@
 
       <div class="player-row" style="margin-top:.5rem">
         <div class="transport">
-          <button type="button" class="btn btn-small" id="btn-play">Play</button>
-          <button type="button" class="btn btn-small btn-quiet" id="btn-back">&minus;2s</button>
-          <button type="button" class="btn btn-small btn-quiet" id="btn-fwd">+2s</button>
+          <button type="button" class="btn btn-small" id="btn-play"
+                  aria-label="Play audio">Play</button>
+          <button type="button" class="btn btn-small btn-quiet" id="btn-back"
+                  aria-label="Back 2 seconds">&minus;2s</button>
+          <button type="button" class="btn btn-small btn-quiet" id="btn-fwd"
+                  aria-label="Forward 2 seconds">+2s</button>
+          <button type="button" class="btn btn-small btn-quiet" id="btn-replay"
+                  aria-label="Replay the current segment">Replay segment</button>
           <label class="chk" title="Loop the segment you are editing">
             <input type="checkbox" id="loop-seg"> Loop segment
           </label>
@@ -55,7 +60,7 @@
         </div>
         <div class="spacer"></div>
         <label class="small muted" for="rate">Speed</label>
-        <select id="rate" style="width:auto">
+        <select id="rate" style="width:auto" aria-label="Playback speed">
           <option value="0.5">0.5x</option>
           <option value="0.75">0.75x</option>
           <option value="1" selected>1x</option>
@@ -63,20 +68,47 @@
           <option value="1.5">1.5x</option>
           <option value="2">2x</option>
         </select>
+        <label class="small muted" for="pre-roll">Pre-roll</label>
+        <select id="pre-roll" class="roll-select" aria-label="Playback pre-roll">
+          <option value="0">0s</option><option value="0.5">0.5s</option>
+          <option value="1" selected>1s</option><option value="2">2s</option>
+          <option value="3">3s</option>
+        </select>
+        <label class="small muted" for="post-roll">Post-roll</label>
+        <select id="post-roll" class="roll-select" aria-label="Playback post-roll">
+          <option value="0">0s</option><option value="0.5">0.5s</option>
+          <option value="1" selected>1s</option><option value="2">2s</option>
+          <option value="3">3s</option>
+        </select>
         <span class="time-readout" id="time-readout">00:00 / 00:00</span>
       </div>
 
+      <div class="ribbon-tools" role="group" aria-label="Waveform zoom">
+        <span class="small muted">Waveform zoom</span>
+        <button type="button" class="btn btn-small btn-quiet" id="zoom-out"
+                aria-label="Zoom waveform out" title="Zoom out (−)">−</button>
+        <button type="button" class="btn btn-small btn-quiet" id="zoom-in"
+                aria-label="Zoom waveform in" title="Zoom in (+)">+</button>
+        <button type="button" class="btn btn-small btn-quiet" id="zoom-fit"
+                aria-label="Show full waveform">Fit</button>
+        <span class="small muted" id="zoom-level" aria-live="polite">Full recording</span>
+      </div>
       <div class="ribbon-wrap">
-        <canvas class="ribbon" id="ribbon" height="72"></canvas>
+        <canvas class="ribbon" id="ribbon" height="72" tabindex="0" role="slider"
+                aria-label="Waveform playback position" aria-valuemin="0"
+                aria-valuemax="{{ document.duration or 0 }}" aria-valuenow="0"
+                aria-valuetext="00:00"></canvas>
       </div>
       <p class="ribbon-hint">
-        Click anywhere on the ribbon to play from that point. Click any word in
-        the transcript to hear it again. Hold the pointer over a word to see
-        how many other times it appears. Double-click a word to find and
-        replace it everywhere.
+        Click or focus the waveform and use the arrow keys to seek. Click a
+        word to replay it with the selected pre/post-roll. Hold the pointer
+        over a word to see how many other times it appears. Double-click a
+        word to find and replace it everywhere.
         <kbd>Space</kbd> play/pause &middot;
         <kbd>&larr;</kbd><kbd>&rarr;</kbd> 2s &middot;
         <kbd>Shift</kbd>+<kbd>&larr;</kbd><kbd>&rarr;</kbd> 5s &middot;
+        <kbd>R</kbd> replay segment &middot; <kbd>L</kbd> loop segment &middot;
+        <kbd>+</kbd>/<kbd>−</kbd> zoom &middot; <kbd>Home</kbd>/<kbd>End</kbd> start/end &middot;
         <kbd>Esc</kbd> leave the text field
       </p>
     </div>
@@ -335,6 +367,7 @@
     proofreading: {{ proofreading|tojson }},
   };
 </script>
+<script src="/static/js/playback.js"></script>
 <script src="/static/js/editor.js"></script>
 <script src="/static/js/speakers.js"></script>
 <script src="/static/js/findreplace.js"></script>
