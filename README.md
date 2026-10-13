@@ -486,14 +486,18 @@ data is PHI, and provides no compliance advice. See the
 Recovery snapshots use the verified `.lsproj` archive format and are stored
 locally under `projects/.snapshots/`, outside each project folder. You can
 include or omit source media when creating a snapshot. Deleting projects or
-recordings offers the option to snapshot first; replacing a project during
-restore creates a safety snapshot. Snapshots remain on the same computer and
-are not protection from drive loss, so copy important snapshots to a separate
-approved location. The app keeps a bounded local history of recovery actions.
+recordings asks you to choose: keep it, delete without a snapshot, or create a
+snapshot and then delete. If a requested snapshot cannot be created, nothing is
+deleted. Replacing a project during restore creates a safety snapshot.
+Snapshots remain on the same computer and are not protection from drive loss,
+so copy important snapshots to a separate approved location. The app keeps a
+bounded local history of recovery actions.
 
-Manual end-to-end testing of the recovery UI has not yet been performed; it is
-deferred for the project owner to do later. The automated recovery tests do not
-verify desktop UI behavior or an installed Box Sync client.
+The automated recovery tests do not verify desktop UI behavior or an installed
+Box Sync client. Windows manual acceptance checks covered backup folder
+browsing, per-project backup configuration, keyboard navigation, and 200% zoom;
+the macOS and Linux native UI (folder picker, desktop window) has been built in
+CI but not exercised by hand.
 
 Optional Box Sync backup copies an archive into a folder you explicitly
 choose for that project (on the project page, under Recovery & Backup) and
