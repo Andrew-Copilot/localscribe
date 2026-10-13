@@ -60,47 +60,69 @@
 </section>
 
 <section class="card">
-  <h2>Last remote action</h2>
-  {% if last_remote_action %}
+  <h2>Last online action</h2>
+  {% set online = activities|selectattr('type', 'equalto', 'network')|list %}
+  {% if online %}
     <p>
-      <strong>{{ activity_labels.get(last_remote_action.action, 'Other activity') }}</strong>
-      &middot; {{ last_remote_action.outcome|replace('_', ' ') }}
+      <strong>{{ online[0].summary }}</strong>
+      <span class="badge {{ 'badge-ok' if online[0].status == 'success' else ('badge-err' if online[0].status == 'failed' else '') }}">{{ online[0].status_label }}</span>
     </p>
-    <p class="small muted">{{ last_remote_action.timestamp }}</p>
+    <p class="small muted">{{ online[0].day }} at {{ online[0].time }}</p>
   {% else %}
-    <p class="muted">No recorded network-affecting action yet.</p>
+    <p class="muted">Nothing recorded yet that could have used the internet.</p>
   {% endif %}
 </section>
 
-<section class="card">
+<section class="card" id="activity-history">
   <h2>Activity history</h2>
   <p class="small muted">
-    At most 200 recent network-affecting and recovery events are kept locally.
-    Project identifiers are represented by a one-way reference; titles,
-    filenames, transcript text, and paths are not recorded.
+    A short log of things that can use the internet (<strong>Online</strong>:
+    update checks, model downloads, Box Sync backups) and things that protect or
+    remove your data (<strong>Data safety</strong>: snapshots, deletions,
+    restores). The latest 200 events are kept on this computer only. Only the
+    kind of action is saved, never titles, file names, transcript text, or
+    paths; project names shown here are looked up when this page opens.
   </p>
-  {% set shown = namespace(any=false) %}
+  {% if activities %}
+  <div class="row" style="margin:.6rem 0">
+    <fieldset class="history-filter">
+      <legend class="sr-only">Show</legend>
+      <label class="chk"><input type="radio" name="history-type" value="all" checked> All</label>
+      <label class="chk"><input type="radio" name="history-type" value="network"> Online</label>
+      <label class="chk"><input type="radio" name="history-type" value="recovery"> Data safety</label>
+    </fieldset>
+    <span class="spacer"></span>
+    <label class="chk"><input type="checkbox" id="history-technical"> Show technical details</label>
+  </div>
   <div class="table-wrap">
-    <table>
-      <thead><tr><th>When</th><th>Type</th><th>Action</th><th>Outcome</th></tr></thead>
+    <table id="history-table">
+      <thead><tr><th>Time</th><th>What happened</th><th>Result</th></tr></thead>
+      {% set shown = namespace(day=none) %}
       <tbody>
-        {% for event in activities|reverse %}
-          {% if event.category in ('network', 'recovery') %}
-            {% set shown.any = true %}
-            <tr>
-              <td class="small nowrap">{{ event.timestamp }}</td>
-              <td>{{ event.category|title }}</td>
-              <td>{{ activity_labels.get(event.action, 'Other activity') }}</td>
-              <td>{{ event.outcome|replace('_', ' ') }}</td>
-            </tr>
+        {% for row in activities %}
+          {% if row.day != shown.day %}
+            {% set shown.day = row.day %}
+            <tr class="history-day" data-day="{{ row.day }}"><th colspan="3" scope="colgroup">{{ row.day }}</th></tr>
           {% endif %}
+          <tr class="history-row" data-type="{{ row.type }}" data-day="{{ row.day }}">
+            <td class="small nowrap">{{ row.time }}</td>
+            <td>
+              {{ row.summary }}
+              {% if row.project %}<span class="muted"> &middot; {{ row.project }}</span>{% endif %}
+              <div class="small muted history-technical" hidden>{{ row.type_label }} &middot; {{ row.detail }} &middot; {{ row.timestamp }}</div>
+            </td>
+            <td>
+              <span class="badge {{ 'badge-ok' if row.status == 'success' else ('badge-err' if row.status == 'failed' else ('badge-warn' if row.status == 'cancelled' else '')) }}">{{ row.status_label }}</span>
+            </td>
+          </tr>
         {% endfor %}
-        {% if not shown.any %}
-          <tr><td colspan="4" class="muted">No activity recorded yet.</td></tr>
-        {% endif %}
       </tbody>
     </table>
   </div>
+  <p class="small muted" id="history-empty" hidden>No events of this kind.</p>
+  {% else %}
+  <p class="muted">No activity recorded yet.</p>
+  {% endif %}
 </section>
 
 <section class="card" id="diagnostics">

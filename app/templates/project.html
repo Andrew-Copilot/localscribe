@@ -84,8 +84,8 @@
   <h3>Recent recovery activity</h3>
   {% if activities %}
   <ul class="small">
-    {% for event in activities|reverse %}
-    <li>{{ event.timestamp[:19].replace('T', ' ') }} · {{ event.action.replace('_', ' ') }} · {{ event.outcome.replace('_', ' ') }}</li>
+    {% for event in activities %}
+    <li>{{ event.day }}, {{ event.time }} · {{ event.summary }} · {{ event.status_label }}</li>
     {% endfor %}
   </ul>
   {% else %}

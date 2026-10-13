@@ -236,10 +236,10 @@ async def page_index(request: Request):
             request,
             projects=projects.list_projects(),
             snapshots=projects.list_all_snapshots(),
-            activities=[
+            activities=activity.history_rows([
                 event for event in activity.recent()
                 if activity.category(event.get("action")) == "recovery"
-            ],
+            ]),
         ),
     )
 
@@ -260,12 +260,12 @@ async def page_project(request: Request, slug: str):
             documents=projects.list_documents(slug),
             stats=projects.project_stats(slug),
             snapshots=projects.list_snapshots(slug),
-            activities=[
+            activities=activity.history_rows([
                 event for event in activity.recent(
                     project.get("project_id") or project["slug"]
                 )
                 if activity.category(event.get("action")) == "recovery"
-            ],
+            ]),
             box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
             vocabulary_profiles=profiles,
             vocabulary_profile_available=any(
@@ -384,13 +384,6 @@ async def page_settings(request: Request):
 @app.get("/privacy", response_class=HTMLResponse)
 async def page_privacy(request: Request):
     events = activity.recent()
-    for event in events:
-        event["category"] = activity.category(event.get("action"))
-    last_remote_action = next(
-        (event for event in reversed(events)
-         if event["category"] == "network"),
-        None,
-    )
     return templates.TemplateResponse(
         request,
         "privacy.html",
@@ -403,8 +396,9 @@ async def page_privacy(request: Request):
                 "logs": str(PATHS.logs),
                 "settings": str(PATHS.settings_file),
             },
-            activities=events,
-            last_remote_action=last_remote_action,
+            activities=activity.history_rows(
+                events, activity.title_index(projects.list_projects())
+            ),
             activity_labels=activity.LABELS,
         ),
     )

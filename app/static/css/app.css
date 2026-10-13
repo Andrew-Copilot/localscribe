@@ -742,6 +742,12 @@ body.console-open .sticky-actions { bottom: calc(var(--console-h) + .5rem); }
   display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; margin-top: 1rem;
 }
 
+.history-filter { display: flex; gap: 1rem; border: 0; margin: 0; padding: 0; }
+.history-day th {
+  text-align: left; font-size: .82rem; color: var(--ink-2);
+  background: var(--surface-2); padding: .35rem .6rem;
+}
+
 /* -------------------------------------------------------------- console */
 
 .console {
