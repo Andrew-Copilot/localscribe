@@ -45,6 +45,8 @@
     if (!state) return;
     state.textContent = text;
     state.className = `save-state ${cls || ''}`.trim();
+    const bar = document.getElementById('settings-actions');
+    if (bar) bar.classList.toggle('is-dirty', cls === 'dirty');
   }
 
   if (form) {
@@ -72,7 +74,7 @@
         }
       }
 
-      const submit = form.querySelector('button[type=submit]');
+      const submit = document.querySelector('button[type=submit][form="settings-form"]');
       submit.disabled = true;
       setState('Saving...');
 

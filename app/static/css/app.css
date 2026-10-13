@@ -724,6 +724,11 @@ canvas.ribbon:focus-visible {
   border: 1px solid var(--line); border-radius: var(--radius);
 }
 body.console-open .sticky-actions { bottom: calc(var(--console-h) + .5rem); }
+.sticky-actions.is-dirty {
+  border-color: var(--accent-dark); background: var(--accent-soft);
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, .12);
+}
+.sticky-actions.is-dirty .save-state { font-size: .92rem; font-weight: 650; }
 
 /* -------------------------------------------------------------- console */
 

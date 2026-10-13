@@ -396,14 +396,14 @@
       </div>
     </div>
   </details>
-
-  <div class="sticky-actions">
-    <button type="submit" class="btn btn-primary">Save settings</button>
-    <span class="save-state" id="settings-state"></span>
-    <div class="spacer"></div>
-    <button type="button" class="btn btn-quiet btn-danger" id="reset-settings">Restore defaults</button>
-  </div>
 </form>
+
+<div class="sticky-actions" id="settings-actions" role="region" aria-label="Save or restore settings">
+  <button type="submit" form="settings-form" class="btn btn-primary">Save settings</button>
+  <span class="save-state" id="settings-state" role="status" aria-live="polite"></span>
+  <div class="spacer"></div>
+  <button type="button" class="btn btn-danger" id="reset-settings">Restore defaults</button>
+</div>
 {% endblock %}
 
 {% block scripts %}
