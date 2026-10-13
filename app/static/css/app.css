@@ -78,6 +78,9 @@ hr { border: 0; border-top: 1px solid var(--line-2); margin: 1.25rem 0; }
 }
 
 .brand { display: flex; align-items: center; gap: .6rem; color: inherit; }
+/* At 200% zoom or on a narrow window the wrapped bar would cover a large part of the
+   viewport and hide focused controls, so it scrolls away instead of sticking. */
+@media (max-width: 760px) { .topbar { position: static; } }
 .brand:hover { text-decoration: none; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.1; }
 .brand-text strong { font-size: 1rem; letter-spacing: -.01em; }
