@@ -15,6 +15,26 @@ button. Resolving a review item records that segment as reviewed. Editing
 segment text or speaker assignment clears prior resolutions and places the
 segment in the changed-since-validation queue.
 
+## Editor layout
+
+The transcript editor puts the transcript first: a compact header (with links
+to the tools below), the player and waveform, then the transcript. On windows
+wider than 1000 px the tools sit in a side panel to the right; on narrower
+windows they stack beneath the transcript.
+
+Five tools are collapsible panels that start closed: **Review Mode**,
+**Speakers**, **De-identification review assistance**, **Timestamped comments
+and questions**, and **Help: shortcuts and highlight legend**. The links after
+"Tools:" in the header open a panel and move focus to its title. Validation
+sign-off, Offline review handoff, Finish the review, Download, and Document
+facts stay visible beneath them.
+
+On windows at least 761 px wide, the top navigation bar stays in view while you
+scroll; if the window is also at least 600 px tall, the player and the find bar
+do too. Playback shortcuts are ignored while focus is on a panel title or a
+form control, so Space and the arrow keys do not trigger playback while you
+operate a panel. Printing outputs the transcript only.
+
 ## Playback review controls
 
 The waveform can be clicked or focused and operated from the keyboard. Use
