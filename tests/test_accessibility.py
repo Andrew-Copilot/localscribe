@@ -70,6 +70,40 @@ def test_landmarks_and_keyboard_entry():
           and "model marked multilingual" in settings)
 
 
+def test_transcript_precedes_collapsed_tool_panels():
+    document = DOCUMENT.read_text(encoding="utf-8")
+    css = CSS.read_text(encoding="utf-8")
+    editor = EDITOR.read_text(encoding="utf-8")
+    tools = (ROOT / "app" / "static" / "js" / "tools.js").read_text(encoding="utf-8")
+    panels = ("tool-review", "tool-speakers", "tool-deid", "tool-notes", "tool-help")
+
+    check("the transcript comes before every secondary tools panel",
+          all(document.index('id="segments"') < document.index(f'id="{panel}"')
+              for panel in panels))
+    check("secondary tools are collapsed details with a summary",
+          all(re.search(rf'<details class="settings-group" id="{panel}">\s*<summary',
+                        document) for panel in panels))
+    moved = ("review-queue", "review-next", "speaker-rows", "spk-count", "spk-plus",
+             "spk-minus", "spk-state", "deidentification-review", "deid-scan",
+             "deid-items", "annotations-panel", "annotation-add", "annotations-list")
+    check("moved controls keep the ids the scripts bind to, once each",
+          all(document.count(f'id="{name}"') == 1 for name in moved))
+    check("each tools panel has a header link that opens it",
+          all(f'href="#{panel}" data-open-tool' in document for panel in panels)
+          and "a[data-open-tool]" in tools and "panel.open = true" in tools)
+    check("the de-identification warning stays inside its panel and summary",
+          document.index("Assistive flags only: findings can be missed")
+          > document.index('id="tool-deid"')
+          and "(assistive flags only)</summary>" in document)
+    check("global shortcuts ignore focused panel summaries",
+          editor.count("button, summary, [contenteditable") == 2)
+    check("the player is sticky only where the viewport has room",
+          "@media (min-width: 761px) and (min-height: 600px)" in css
+          and re.search(r"\.player-card \{ position: sticky; top: 3\.6rem; \}", css))
+    check("print hides the skip link and the tools column",
+          re.search(r"@media print \{\s*\.skip-link,[^}]*\.side-panel", css))
+
+
 def test_settings_save_controls_stay_reachable():
     settings = SETTINGS.read_text(encoding="utf-8")
     script = (ROOT / "app" / "static" / "js" / "settings.js").read_text(encoding="utf-8")
@@ -116,6 +150,7 @@ def test_focus_scaling_contrast_and_motion_preferences():
 def main() -> int:
     for test in (
         test_landmarks_and_keyboard_entry,
+        test_transcript_precedes_collapsed_tool_panels,
         test_settings_save_controls_stay_reachable,
         test_keyboard_speaker_workflow_and_color_cues,
         test_focus_scaling_contrast_and_motion_preferences,
