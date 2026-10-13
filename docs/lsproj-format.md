@@ -31,7 +31,13 @@ files are not interchange payload. Browser preview audio is omitted when source
 media is omitted.
 
 The local de-identification report and reversible replacement map
-(`deidentification.local.json`) are explicitly excluded from `.lsproj` exports.
+(`deidentification.local.json`) and the per-project backup folder and history
+(`backup.local.json`) are explicitly excluded from `.lsproj` exports and
+snapshots. The importer skips any `*.local.json` entry and drops a legacy
+`box_health_override` record from `project.json`, so an archive can never
+restore a backup folder, history, or earlier destination attestation. Replacing
+a project keeps this computer's own `backup.local.json` (without its
+attestation).
 Transcript revisions remain part of the project tree and can contain earlier,
 unreplaced text; review the archive before sharing it.
 

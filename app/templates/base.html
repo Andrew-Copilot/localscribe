@@ -26,9 +26,9 @@
     <a href="/" class="{{ 'on' if request.url.path == '/' else '' }}"
        {% if request.url.path == '/' %}aria-current="page"{% endif %}>Projects</a>
     <a href="/settings" class="{{ 'on' if request.url.path == '/settings' else '' }}"
-       {% if request.url.path == '/settings' %}aria-current="page"{% endif %}>AI Settings</a>
+       {% if request.url.path == '/settings' %}aria-current="page"{% endif %}>Settings</a>
     <a href="/privacy" class="{{ 'on' if request.url.path == '/privacy' else '' }}"
-       {% if request.url.path == '/privacy' %}aria-current="page"{% endif %}>Privacy Center</a>
+       {% if request.url.path == '/privacy' %}aria-current="page"{% endif %}>Activity &amp; Diagnostics</a>
     <a href="/about" class="{{ 'on' if request.url.path == '/about' else '' }}"
        {% if request.url.path == '/about' %}aria-current="page"{% endif %}>About</a>
   </nav>

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from types import ModuleType
+from unittest import mock
+from unittest.mock import patch
 
 from app import folder_picker, projects
 
@@ -27,25 +30,19 @@ def test_project_operation_and_queued_task():
     })
     root = Path(__file__).resolve().parent.parent
     jobs = (root / "app/jobs.py").read_text(encoding="utf-8")
-    project_module = (root / "app/projects.py").read_text(encoding="utf-8")
     check("projects preserve the selected operation", project["operation"] == "translate")
-    check("legacy projects use the current default without changing archive metadata",
+    check("legacy project records are not given an operation on load",
           "operation" not in projects._normalize_project({"data_sensitivity": "no_phi"}))
-    check("missing project operation follows the current AI setting",
+    check("an explicit project operation is returned unchanged",
           projects.project_operation({"operation": "translate"}) == "translate")
     check("translation is carried into the queued job",
-          "doc_id=doc_id, operation=operation" in jobs)
+          "operation=languages.parse_operation(operation" in jobs)
     check("engine task is explicitly set by the selected operation",
           'overrides["task"] = operation' in jobs)
-    check("new project records validate explicit operation choices",
-          'if key == "operation" and key in fields:' in project_module)
-    try:
-        projects.new_project_record("Study", operation="unsupported")
-    except projects.ProjectValidationError:
-        invalid_rejected = True
-    else:
-        invalid_rejected = False
-    check("invalid project operations are rejected", invalid_rejected)
+    check("new project records normalise explicit operation choices",
+          projects.new_project_record("Study", operation="translate")["operation"] == "translate")
+    check("an unsupported operation is never stored",
+          projects.new_project_record("Study", operation="unsupported")["operation"] == "")
 
 
 def test_native_picker_result_and_cancel():
@@ -78,9 +75,9 @@ def test_native_picker_result_and_cancel():
         sys.modules["tkinter.filedialog"] = filedialog
         try:
             check("picker returns the selected absolute folder",
-                  folder_picker.choose_folder() == str(root_path.resolve()))
+                  folder_picker.pick_folder_in_process() == str(root_path.resolve()))
             check("picker cancellation leaves the path unchanged",
-                  folder_picker.choose_folder() == "")
+                  folder_picker.pick_folder_in_process() == "")
         finally:
             if old_tkinter is None:
                 sys.modules.pop("tkinter", None)
@@ -90,6 +87,34 @@ def test_native_picker_result_and_cancel():
                 sys.modules.pop("tkinter.filedialog", None)
             else:
                 sys.modules["tkinter.filedialog"] = old_filedialog
+
+
+def test_picker_runs_in_a_child_process_and_falls_back():
+    def child(answer, code=0):
+        def run(command, **_kwargs):
+            if answer is not None:
+                Path(command[2]).write_text(answer, encoding="utf-8")
+            return subprocess.CompletedProcess(command, code)
+        return run
+
+    with patch.object(folder_picker.subprocess, "run", child("C:\\Synthetic\\Folder\n")):
+        check("the folder chosen in the child process is returned",
+              folder_picker.choose_folder("") == "C:\\Synthetic\\Folder")
+    with patch.object(folder_picker.subprocess, "run", child("")):
+        check("cancelling the dialog returns an empty path",
+              folder_picker.choose_folder("") == "")
+    for label, runner in (
+        ("a dialog that cannot start", child(None, 1)),
+        ("a missing interpreter", mock.Mock(side_effect=OSError("synthetic"))),
+        ("a timeout", mock.Mock(side_effect=subprocess.TimeoutExpired("x", 1))),
+    ):
+        with patch.object(folder_picker.subprocess, "run", runner):
+            try:
+                folder_picker.choose_folder("")
+            except folder_picker.FolderPickerUnavailable:
+                check(f"{label} reports the picker as unavailable", True)
+            else:
+                check(f"{label} reports the picker as unavailable", False)
 
 
 def test_project_and_settings_controls_are_present():
@@ -103,23 +128,28 @@ def test_project_and_settings_controls_are_present():
           'value="transcribe"' in project_template
           and 'value="translate"' in project_template
           and "Translate to English" in project_template
-          and "Translated" in project_js
-          and "All ${operation === 'translate' ? 'translated' : 'transcribed'}"
-          in project_js)
+          and "T(operation)" in project_js)
     check("operation choice is saved per project",
           "LS.put(`/api/projects/" in project_js
           and "operation });" in project_js)
-    check("translation rejects an English-only model when source language is unknown",
-          "Translate to English needs a multilingual Whisper model" in main)
-    check("Box path includes a browse action",
-          'id="browse-box-folder"' in settings_template
-          and "LS.post('/api/folder-picker'" in settings_js)
+    catalog = (root / "app/catalog.py").read_text(encoding="utf-8")
+    check("translation rejects an English-only model before queueing",
+          "Translate to English needs a standard multilingual model" in catalog
+          and "catalog.operation_problem(" in main)
+    backup_js = (root / "app/static/js/backup.js").read_text(encoding="utf-8")
+    check("Browse for a backup folder is on the project page and uses the picker",
+          'id="backup-browse"' in project_template
+          and "LS.post('/api/folder-picker'" in backup_js)
+    check("the shared Box folder control is gone from Settings",
+          "browse-box-folder" not in settings_template
+          and "browse-box-folder" not in settings_js)
 
 
 def main() -> int:
     for test in (
         test_project_operation_and_queued_task,
         test_native_picker_result_and_cancel,
+        test_picker_runs_in_a_child_process_and_falls_back,
         test_project_and_settings_controls_are_present,
     ):
         print(f"\n{test.__name__}")

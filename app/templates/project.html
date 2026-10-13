@@ -12,7 +12,7 @@
     <p class="small muted">
       {{ stats.documents }} file{{ '' if stats.documents == 1 else 's' }}
       {% if stats.duration %} &middot; {{ (stats.duration / 60)|round(1) }} minutes of audio{% endif %}
-      {% if stats.words %} &middot; {{ '{:,}'.format(stats.words) }} words transcribed{% endif %}
+      {% if stats.words %} &middot; {{ '{:,}'.format(stats.words) }} words of finished text{% endif %}
       &middot; created {{ project.created[:10] }}
     </p>
   </div>
@@ -43,9 +43,11 @@
 </div>
 {% endif %}
 
+<section id="recovery-backup" aria-labelledby="recovery-backup-heading">
+<h2 id="recovery-backup-heading" class="section-heading">Recovery &amp; Backup</h2>
 <div class="card" id="recovery-card">
   <div class="row">
-    <h2>Recovery snapshots</h2>
+    <h3 style="margin:0">Recovery snapshots</h3>
     <span class="spacer"></span>
     <label class="chk">
       <input type="checkbox" id="snapshot-include-media" checked>
@@ -63,7 +65,8 @@
       <select id="snapshot-select">
         {% for snapshot in snapshots %}
         <option value="{{ snapshot.snapshot_id }}">
-          {{ snapshot.created[:19].replace('T', ' ') }} · {{ '{:,}'.format(snapshot.size_bytes) }} bytes
+          {{ snapshot.created[:19].replace('T', ' ') }} · {{ '{:,}'.format(snapshot.size_bytes) }} bytes ·
+          {{ {'included': 'source media included', 'omitted': 'source media omitted', 'none': 'no recordings', 'unknown': 'media not recorded (older snapshot)'}[snapshot.media] }}
         </option>
         {% endfor %}
       </select>
@@ -79,13 +82,16 @@
     <div class="field" style="align-self:end">
       <button type="button" class="btn" id="restore-snapshot-btn"
         {% if not snapshots %}disabled{% endif %}>Restore selected snapshot</button>
+      <button type="button" class="btn btn-quiet" id="open-snapshot-folder-btn"
+        {% if not snapshots %}disabled{% endif %}>Open snapshot folder</button>
     </div>
   </div>
+  <p class="small muted" id="snapshot-folder-note" role="status" aria-live="polite"></p>
   <h3>Recent recovery activity</h3>
   {% if activities %}
   <ul class="small">
-    {% for event in activities|reverse %}
-    <li>{{ event.timestamp[:19].replace('T', ' ') }} · {{ event.action.replace('_', ' ') }} · {{ event.outcome.replace('_', ' ') }}</li>
+    {% for event in activities %}
+    <li>{{ event.day }}, {{ event.time }} · {{ event.summary }} · {{ event.status_label }}</li>
     {% endfor %}
   </ul>
   {% else %}
@@ -94,50 +100,86 @@
 </div>
 
 <div class="card" id="box-backup-card">
-  <h2>Box Sync backup</h2>
+  <h3>Backup folder for this project</h3>
   <p class="small muted">
-    This explicitly copies a checksummed project archive into the local folder
-    you configure. Local Scribe cannot confirm that Box Sync is running or that
-    a destination is approved. Box Sync handles its own sign-in and network sync.
+    This explicitly copies a checksummed project archive into a folder you
+    choose for <strong>this project only</strong>, normally inside your Box Sync
+    desktop folder. Nothing is copied unless you start a backup. Local Scribe
+    verifies the copy it writes; it cannot see whether Box has uploaded it or
+    whether the folder is approved for this data.
   </p>
-  {% if box_sync_configured %}
-  <div class="field">
-    <label class="chk">
-      <input type="checkbox" id="confirm-box-sync-destination">
-      I selected this folder from my existing U of I Box Sync client.
-    </label>
+
+  <div id="backup-folder" aria-live="polite">
+    <p class="small"><strong>Folder:</strong>
+      <span id="backup-folder-path" class="mono" style="overflow-wrap:anywhere"></span></p>
+    <p class="small" id="backup-folder-status" role="status"></p>
+    <div class="notice notice-info small" id="backup-legacy" hidden>
+      An earlier version saved one folder for every project. Local Scribe does not
+      apply it automatically.
+      <button type="button" class="btn btn-small" id="backup-use-previous">Use it for this project</button>
+    </div>
+    <div class="row">
+      <button type="button" class="btn btn-small" id="backup-browse">Browse&hellip;</button>
+      <button type="button" class="btn btn-small btn-quiet" id="backup-clear" hidden>Clear folder</button>
+    </div>
+    <details class="small" id="backup-manual" style="margin-top:.6rem">
+      <summary>Enter a folder path instead</summary>
+      <div class="row" style="margin-top:.4rem">
+        <label for="backup-path-input" class="sr-only">Backup folder path</label>
+        <input type="text" id="backup-path-input" style="flex:1;min-width:12rem"
+               autocomplete="off" spellcheck="false">
+        <button type="button" class="btn btn-small" id="backup-path-save">Save folder</button>
+      </div>
+    </details>
   </div>
-  <div class="field">
-    <label class="chk">
-      <input type="checkbox" id="confirm-box-health">
-      I independently verified that this destination is an approved Box Health
-      folder (required for PHI, potential PHI, or unknown data unless its root
-      name matches the documented heuristic).
-    </label>
+
+  <div id="backup-actions" hidden>
+    <h4>Back up now</h4>
+    <div class="field">
+      <label class="chk">
+        <input type="checkbox" id="confirm-box-sync-destination">
+        This folder belongs to my existing Box Sync client.
+      </label>
+    </div>
+    <div class="field" id="box-health-field" hidden>
+      <label class="chk">
+        <input type="checkbox" id="confirm-box-health">
+        I independently verified that this folder is approved for PHI,
+        potential PHI, or unclassified data (for the University of Iowa, a Box
+        Health folder). Local Scribe cannot check this from the folder name alone.
+      </label>
+    </div>
+    <div class="field">
+      <label class="chk">
+        <input type="checkbox" id="box-backup-include-media" checked>
+        Include original source media
+      </label>
+    </div>
+    <div class="row">
+      <button type="button" class="btn btn-primary" id="start-box-backup-btn">
+        Back up to this folder
+      </button>
+      <button type="button" class="btn btn-quiet" id="cancel-box-backup-btn" hidden>
+        Cancel backup
+      </button>
+      <span id="box-backup-status" class="small muted" role="status" aria-live="polite"></span>
+    </div>
   </div>
-  <div class="field">
-    <label class="chk">
-      <input type="checkbox" id="box-backup-include-media" checked>
-      Include original source media
-    </label>
+
+  <h4>Backup history</h4>
+  <p class="small muted" id="backup-history-empty">No backups have been made from this computer for this project.</p>
+  <div class="table-wrap" id="backup-history-wrap" hidden>
+    <table id="backup-history">
+      <thead><tr><th>When</th><th>Result</th><th>Local copy</th><th>Box upload</th></tr></thead>
+      <tbody></tbody>
+    </table>
   </div>
-  <div class="row">
-    <button type="button" class="btn btn-primary" id="start-box-backup-btn">
-      Back up to Box Sync
-    </button>
-    <button type="button" class="btn btn-quiet" id="cancel-box-backup-btn" hidden>
-      Cancel backup
-    </button>
-    <span id="box-backup-status" class="small muted" role="status" aria-live="polite"></span>
-  </div>
-  {% else %}
-  <p class="notice notice-info small">
-    No destination is configured. Set the path to a folder inside your existing
-    U of I Box Sync desktop folder in <a href="/settings">AI Settings</a>.
-    Local Scribe will not choose one for you.
+  <p class="small muted">
+    History stays on this computer and is not included in exported projects,
+    snapshots, or handoff packages.
   </p>
-  {% endif %}
 </div>
+</section>
 
 <!-- Project metadata: explicit save, unlike the transcript editor's autosave -->
 <form class="card" id="meta-form" hidden>
@@ -184,7 +226,7 @@
     <p class="help">
       Given to Whisper as prior context, which measurably improves the spelling
       of proper nouns and technical terms. Leave blank to use the global
-      initial prompt from AI Settings instead.
+      initial prompt from Settings instead.
     </p>
   </div>
   <div class="field">
@@ -349,27 +391,8 @@
   <p class="small muted" id="upload-status"></p>
 </div>
 
-<!-- Files + the prominent Transcribe action -->
+<!-- Files + the prominent action (Transcribe or Translate to English) -->
 <div class="card">
-  <fieldset class="op-picker" id="operation-picker">
-    <legend>What do you want to do?</legend>
-    <div class="row">
-      <label class="chk">
-        <input type="radio" name="operation" value="transcribe"
-               {% if operation == 'transcribe' %}checked{% endif %}>
-        <span><strong>Transcribe</strong>
-          <span class="small muted">Write what was said in the language spoken</span></span>
-      </label>
-      <label class="chk">
-        <input type="radio" name="operation" value="translate"
-               {% if operation == 'translate' %}checked{% endif %}>
-        <span><strong>Translate to English</strong>
-          <span class="small muted">Translate speech into English text</span></span>
-      </label>
-    </div>
-    <p class="small muted">The selection is saved for this project. Spoken-language settings come from AI Settings.</p>
-    <span class="save-state" id="operation-state" role="status" aria-live="polite"></span>
-  </fieldset>
   <div class="row" style="margin-bottom:.8rem">
     <h2 style="margin:0">Recordings</h2>
     <span class="badge" id="doc-count">{{ stats.documents }}</span>
@@ -379,12 +402,61 @@
        href="/api/projects/{{ project.slug }}/uncertain-terms.csv">
       Uncertain-term report (CSV)
     </a>
+  </div>
+
+  <!-- What to do. Saved per project; changing it never touches finished results. -->
+  <fieldset class="op-picker" id="operation-picker">
+    <legend>What do you want to do?</legend>
+    <div class="row">
+      <label class="chk op-choice">
+        <input type="radio" name="operation" value="transcribe"
+               {% if operation == 'transcribe' %}checked{% endif %}>
+        <span class="op-text"><strong>Transcribe</strong>
+          <span class="small muted">Write what was said, in the language spoken</span></span>
+      </label>
+      <label class="chk op-choice">
+        <input type="radio" name="operation" value="translate"
+               {% if operation == 'translate' %}checked{% endif %}>
+        <span class="op-text"><strong>Translate to English</strong>
+          <span class="small muted">Machine-translate speech in any language into English text</span></span>
+      </label>
+    </div>
+  </fieldset>
+
+  <div class="row" style="margin:.4rem 0 .6rem">
+    <label for="language-select" title="The language spoken in the recordings">Spoken language</label>
+    <select id="language-select" style="width:auto;max-width:16rem"
+            aria-describedby="op-summary">
+      {% for choice in language_choices %}
+      <option value="{{ choice.value }}" {% if choice.value == default_language %}selected{% endif %}>{{ choice.label }}</option>
+      {% endfor %}
+    </select>
+    <div class="spacer"></div>
     <button type="button" class="btn btn-transcribe btn-big" id="transcribe-btn"
       {% if not stats.pending and not stats.documents %}disabled{% endif %}>
-      {{ 'Translate to English' if operation == 'translate' else 'Transcribe' }}
+      {{ terms.action }}
       {% if stats.pending %}<span class="badge badge-ok">{{ stats.pending }}</span>{% endif %}
     </button>
   </div>
+
+  <p class="small" id="op-summary" role="status" aria-live="polite" style="margin:.2rem 0 .6rem">
+    <strong>{{ terms.name }}.</strong> {{ terms.explain }}
+    Spoken language: {% for c in language_choices %}{% if c.value == default_language %}{{ c.label }}{% endif %}{% endfor %}.
+    You will get: {{ terms.output }}.
+    Model: {{ operation_info.model.label }}{% if not operation_info.compat[operation].ok %} (not suitable for this){% endif %}.
+  </p>
+
+  <div id="op-note" class="notice notice-warn small" role="status" aria-live="polite" hidden></div>
+
+  <p class="small muted" id="language-help" style="margin:.2rem 0 .8rem">
+    Leave the language on automatic detection unless a recording opens with
+    music, noise or another language, or the wrong language is detected; then
+    choose it here. The operation and the language apply to every file started
+    from this page and are remembered for this project only. New projects start
+    from the defaults in Settings. Files that already have a result are not
+    changed unless you confirm replacing them, and the earlier result is kept in
+    that recording's Edit history.
+  </p>
 
   <div id="queue-note" class="notice notice-info small" hidden></div>
 
@@ -406,7 +478,7 @@
 
   <div class="empty" id="no-docs" hidden>
     <h3>No recordings yet</h3>
-    <p>Add audio or video files above, then press Transcribe.</p>
+    <p id="empty-hint">{{ terms.empty_hint }}</p>
   </div>
 </div>
 {% endblock %}
@@ -417,10 +489,13 @@
     slug: {{ project.slug|tojson }},
     projectId: {{ (project.project_id or project.slug)|tojson }},
     vocabularyProfileId: {{ (project.vocabulary_profile_id or '')|tojson }},
-    operation: {{ operation|tojson }},
+    backup: {{ backup|tojson }},
     documents: {{ documents|tojson }},
     stats: {{ stats|tojson }},
+    operation: {{ operation|tojson }},
+    info: {{ operation_info|tojson }},
   };
 </script>
 <script src="/static/js/project.js"></script>
+<script src="/static/js/backup.js"></script>
 {% endblock %}

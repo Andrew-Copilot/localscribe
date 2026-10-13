@@ -1,7 +1,63 @@
-/* Project page: metadata editing, uploads, the file table, and transcription. */
+/* Project page: operation, metadata editing, uploads, the file table, and processing.
+
+   Two operations share this page: Transcribe (the spoken language, written as
+   spoken) and Translate to English (a machine translation). Every label that
+   depends on the operation comes from window.PROJECT.info.terms, which the
+   server builds once from app/languages.py, so the wording here cannot drift
+   from the exports and the document page. */
 
 (() => {
   const slug = window.PROJECT.slug;
+  const info = window.PROJECT.info || { terms: {}, compat: {}, model: {}, suggestion: null };
+  const TERMS = info.terms || {};
+
+  /* Removal dialog with three explicit outcomes, so Cancel never silently
+     means "delete without a safety copy". Resolves 'snapshot', 'plain' or null. */
+  function confirmRemoval({ title, message }) {
+    return new Promise((resolve) => {
+      const dialog = document.createElement('dialog');
+      dialog.className = 'confirm-dialog';
+      dialog.setAttribute('aria-labelledby', 'confirm-dialog-title');
+      dialog.setAttribute('aria-describedby', 'confirm-dialog-body');
+      const form = document.createElement('form');
+      form.method = 'dialog';
+      const heading = document.createElement('h2');
+      heading.id = 'confirm-dialog-title';
+      heading.textContent = title;
+      const body = document.createElement('p');
+      body.id = 'confirm-dialog-body';
+      body.textContent = message;
+      const hint = document.createElement('p');
+      hint.className = 'small muted';
+      hint.textContent =
+        'A recovery snapshot is a local copy of the whole project that you can restore from later.';
+      const actions = document.createElement('div');
+      actions.className = 'confirm-dialog-actions';
+      [
+        ['Keep it', '', 'btn'],
+        ['Remove without a snapshot', 'plain', 'btn btn-danger'],
+        ['Create snapshot, then remove', 'snapshot', 'btn btn-primary'],
+      ].forEach(([label, value, cls]) => {
+        const button = document.createElement('button');
+        button.type = 'submit';
+        button.value = value;
+        button.className = cls;
+        button.textContent = label;
+        if (value === 'snapshot') button.autofocus = true;
+        actions.appendChild(button);
+      });
+      form.append(heading, body, hint, actions);
+      dialog.appendChild(form);
+      dialog.addEventListener('close', () => {
+        const choice = dialog.returnValue || null;
+        dialog.remove();
+        resolve(choice);
+      });
+      document.body.appendChild(dialog);
+      dialog.showModal();
+    });
+  }
+  let operation = window.PROJECT.operation === 'translate' ? 'translate' : 'transcribe';
   let documents = window.PROJECT.documents || [];
 
   const rows = document.getElementById('doc-rows');
@@ -10,23 +66,64 @@
   const transcribeBtn = document.getElementById('transcribe-btn');
   const docCount = document.getElementById('doc-count');
   const queueNote = document.getElementById('queue-note');
-  const operationPicker = document.getElementById('operation-picker');
-  const operationState = document.getElementById('operation-state');
-  let operation = window.PROJECT.operation || 'transcribe';
+  const languageSelect = document.getElementById('language-select');
+  const opSummary = document.getElementById('op-summary');
+  const opNote = document.getElementById('op-note');
+  const emptyHint = document.getElementById('empty-hint');
+  const uploadStatus = document.getElementById('upload-status');
 
   const ACTIVE = ['queued', 'probing', 'decoding', 'transcribing'];
 
-  const STATUS = {
-    uploaded: ['badge', 'Ready to transcribe'],
-    queued: ['badge badge-run', 'Queued'],
-    probing: ['badge badge-run', 'Inspecting'],
-    decoding: ['badge badge-run', 'Decoding audio'],
-    transcribing: ['badge badge-run', 'Transcribing'],
-    transcribed: ['badge badge-ok', 'Transcribed'],
-    failed: ['badge badge-err', 'Failed'],
-    cancelled: ['badge badge-warn', 'Cancelled'],
-    unusable: ['badge badge-err', 'Unusable file'],
-  };
+  const T = (op) => TERMS[op === 'translate' ? 'translate' : 'transcribe'] || {};
+  const compat = (op) => (info.compat && info.compat[op]) || { ok: true, level: 'ok', message: '' };
+  const blocked = () => !compat(operation).ok;
+  const docOperation = (doc) => (doc.operation === 'translate' ? 'translate' : 'transcribe');
+
+  /* How a finished recording is labelled. This reflects what is stored on the
+     recording, never the operation currently selected: switching the project
+     to Translate does not relabel a transcript that was made before. */
+  function resultBadge(doc) {
+    switch (doc.output_status) {
+      case 'translated':
+      case 'english_source':
+        return ['badge badge-ok', T('translate').done];
+      case 'untranslated':
+        return ['badge badge-warn', 'Not translated'];
+      case 'unverified':
+        return ['badge badge-warn', `${T('translate').done} (unconfirmed)`];
+      default:
+        return ['badge badge-ok', T('transcribe').done];
+    }
+  }
+
+  function statusBadge(doc) {
+    const op = doc.pending_operation || operation;
+    switch (doc.status) {
+      case 'uploaded': return ['badge', T(operation).ready];
+      case 'queued': return ['badge badge-run', 'Queued'];
+      case 'probing': return ['badge badge-run', 'Inspecting'];
+      case 'decoding': return ['badge badge-run', 'Decoding audio'];
+      case 'transcribing': return ['badge badge-run', T(op).progressive];
+      case 'transcribed': return resultBadge(doc);
+      case 'failed': return ['badge badge-err', 'Failed'];
+      case 'cancelled': return ['badge badge-warn', 'Cancelled'];
+      case 'unusable': return ['badge badge-err', 'Unusable file'];
+      default: return ['badge', doc.status];
+    }
+  }
+
+  function resultNote(doc) {
+    if (!doc.language_name) return '';
+    let text = LS.escapeHtml(doc.language_name) + (doc.language_requested === 'auto' ? ' (detected)' : '');
+    switch (doc.output_status) {
+      case 'translated': text += ', English translation'; break;
+      case 'english_source': text += ', English translation (the speech was English)'; break;
+      case 'untranslated': text += ', translation requested but the text is still not English'; break;
+      case 'unverified': text += ', translation to English not confirmed'; break;
+      default: break;
+    }
+    return ` &middot; ${text}`;
+  }
 
   /* ------------------------------------------------------------ file table */
 
@@ -42,32 +139,39 @@
       if (noDocs) noDocs.hidden = true;
     }
 
+    const action = T(operation).action;
+    const off = blocked();
+
     documents.forEach((doc) => {
-      const [cls, normalLabel] = STATUS[doc.status] || ['badge', doc.status];
-      const label = doc.media_missing
-        ? 'Source media missing'
-        : (doc.status === 'transcribed' && doc.operation === 'translate'
-          ? 'Translated'
-          : normalLabel);
+  const [cls, normalLabel] = statusBadge(doc);
+  const label = doc.media_missing ? 'Source media missing' : normalLabel;
       const media = doc.media || {};
       const kind = media.has_video ? 'video' : 'audio';
       const codec = media.audio_codec ? ` / ${media.audio_codec}` : '';
       const done = doc.status === 'transcribed';
+      const name = LS.escapeHtml(doc.filename);
+      // On a finished recording the button either redoes the same operation
+      // or runs the other one; either way it asks before replacing anything.
+      const buttonLabel = done && docOperation(doc) === operation ? 'Redo' : action;
 
       const tr = document.createElement('tr');
       tr.dataset.id = doc.id;
       tr.innerHTML = `
         <td>
           ${done
-            ? `<a href="/project/${encodeURIComponent(slug)}/document/${encodeURIComponent(doc.id)}"><strong>${LS.escapeHtml(doc.filename)}</strong></a>`
-            : `<strong>${LS.escapeHtml(doc.filename)}</strong>`}
+            ? `<a href="/project/${encodeURIComponent(slug)}/document/${encodeURIComponent(doc.id)}"><strong>${name}</strong></a>`
+            : `<strong>${name}</strong>`}
           <div class="small muted">${LS.bytes(doc.size_bytes)}${
             doc.human_edited ? ' &middot; <span class="badge badge-ok">reviewed</span>' : ''}${
-            doc.low_confidence ? ` &middot; ${doc.low_confidence} low-confidence words` : ''}</div>
+            done ? resultNote(doc) : ''}${
+            (doc.low_confidence && doc.output_status !== 'translated' && doc.output_status !== 'unverified')
+              ? ` &middot; ${doc.low_confidence} low-confidence words` : ''}</div>
         </td>
         <td class="small">${LS.escapeHtml(media.container || kind)}<div class="muted small">${LS.escapeHtml(kind + codec)}</div></td>
         <td class="num mono">${doc.duration ? LS.clock(doc.duration) : '-'}</td>
-        <td class="num mono">${doc.words ? doc.words.toLocaleString() : '-'}</td>
+        <td class="num mono">${doc.words
+          ? doc.words.toLocaleString() + (doc.length_unit === 'characters' ? ' chars' : '')
+          : '-'}</td>
         <td>
           <span class="${cls}">${LS.escapeHtml(label)}</span>
           <div class="small muted status-detail">${LS.escapeHtml(
@@ -78,14 +182,17 @@
         </td>
         <td class="nowrap" style="text-align:right">
           ${done
-            ? `<a class="btn btn-small" href="/project/${encodeURIComponent(slug)}/document/${encodeURIComponent(doc.id)}">Review</a>`
+            ? `<a class="btn btn-small" href="/project/${encodeURIComponent(slug)}/document/${encodeURIComponent(doc.id)}" aria-label="Review ${name}">Review</a>`
             : ''}
           ${doc.media_missing
             ? '<span class="small muted">Add the source recording to transcribe</span>'
             : ACTIVE.includes(doc.status)
             ? '<span class="small muted">working...</span>'
-            : `<button type="button" class="btn btn-small btn-quiet" data-act="one" data-id="${doc.id}">${done ? 'Redo' : (operation === 'translate' ? 'Translate' : 'Transcribe')}</button>`}
-          <button type="button" class="btn btn-small btn-quiet btn-danger" data-act="del" data-id="${doc.id}">Remove</button>
+            : `<button type="button" class="btn btn-small btn-quiet" data-act="one" data-id="${doc.id}"
+                 aria-label="${LS.escapeHtml(buttonLabel)}: ${name}"
+                 ${off ? 'disabled title="The selected model cannot do this. See the note above."' : ''}>${LS.escapeHtml(buttonLabel)}</button>`}
+          <button type="button" class="btn btn-small btn-quiet btn-danger" data-act="del" data-id="${doc.id}"
+                  aria-label="Remove ${name}">Remove</button>
         </td>`;
       rows.appendChild(tr);
     });
@@ -96,24 +203,126 @@
     ).length;
     const busy = documents.some((d) => ACTIVE.includes(d.status));
     const missingMedia = documents.some((d) => d.media_missing);
-    const action = operation === 'translate' ? 'Translate to English' : 'Transcribe';
 
     if (docCount) docCount.textContent = documents.length;
     if (transcribeBtn) {
-      transcribeBtn.disabled = busy || (!pending && !documents.length);
+      transcribeBtn.disabled = busy || off || (!pending && !documents.length);
       transcribeBtn.innerHTML = busy
-        ? `${operation === 'translate' ? 'Translating' : 'Transcribing'}...`
+        ? `${LS.escapeHtml(T(operation).progressive)}...`
         : (pending
-          ? `${action} <span class="badge badge-ok">${pending}</span>`
-          : action);
+          ? `${LS.escapeHtml(action)} <span class="badge badge-ok">${pending}</span>`
+          : LS.escapeHtml(action));
       if (!busy && !pending && documents.length) {
         transcribeBtn.disabled = true;
-        transcribeBtn.textContent = missingMedia
-          ? 'Source media missing'
-          : `All ${operation === 'translate' ? 'translated' : 'transcribed'}`;
+        transcribeBtn.textContent = missingMedia ? 'Source media missing' : T(operation).all_done;
+      }
+      transcribeBtn.title = off ? 'The selected model cannot do this. See the note above.' : '';
+    }
+    renderOperation();
+  }
+
+  /* ------------------------------------------------------------- operation */
+
+  function languageLabel() {
+    const option = languageSelect && languageSelect.options[languageSelect.selectedIndex];
+    return option ? option.textContent : '';
+  }
+
+  /* Everything that explains the current choice, rebuilt whenever it changes:
+     what will happen, in which language, with which model, whether that model
+     is suitable, and whether anything existing would be replaced. */
+  function renderOperation() {
+    const terms = T(operation);
+    const check = compat(operation);
+
+    document.querySelectorAll('input[name="operation"]').forEach((radio) => {
+      radio.checked = radio.value === operation;
+    });
+
+    if (opSummary) {
+      const existing = documents.filter((d) => d.status === 'transcribed').length;
+      opSummary.innerHTML =
+        `<strong>${LS.escapeHtml(terms.name)}.</strong> ${LS.escapeHtml(terms.explain)} ` +
+        `Spoken language: ${LS.escapeHtml(languageLabel())}. ` +
+        `You will get: ${LS.escapeHtml(terms.output)}. ` +
+        `Model: ${LS.escapeHtml(info.model.label || '')}` +
+        `${check.ok ? '' : ' (not suitable for this)'}.` +
+        (existing
+          ? ` ${LS.plural(existing, 'recording')} already ${existing === 1 ? 'has' : 'have'} a result;` +
+            ' nothing is replaced unless you confirm it.'
+          : '');
+    }
+
+    if (opNote) {
+      opNote.innerHTML = '';
+      if (check.message) {
+        opNote.hidden = false;
+        opNote.className = `notice small${check.ok ? '' : ' notice-warn'}`;
+        const text = document.createElement('div');
+        text.textContent = check.message;
+        opNote.appendChild(text);
+
+        const suggestion = info.suggestion;
+        if (!check.ok && suggestion && suggestion.key !== info.model.key) {
+          const row = document.createElement('div');
+          row.className = 'row';
+          row.style.marginTop = '.5rem';
+          if (suggestion.downloaded) {
+            const use = document.createElement('button');
+            use.type = 'button';
+            use.className = 'btn btn-small';
+            use.id = 'op-use-model';
+            use.textContent = `Use ${suggestion.label}`;
+            use.title = 'Changes the selected model for every project';
+            use.addEventListener('click', () => useModel(suggestion));
+            row.appendChild(use);
+            const hint = document.createElement('span');
+            hint.className = 'muted';
+            hint.textContent = 'Already downloaded. This changes the model for every project.';
+            row.appendChild(hint);
+          } else {
+            const link = document.createElement('a');
+            link.className = 'btn btn-small';
+            link.href = '/settings';
+            link.textContent = `Download ${suggestion.label} in Settings`;
+            row.appendChild(link);
+          }
+          opNote.appendChild(row);
+        }
+      } else {
+        opNote.hidden = true;
       }
     }
+
+    if (emptyHint) emptyHint.textContent = terms.empty_hint;
   }
+
+  async function useModel(suggestion) {
+    try {
+      await LS.post('/api/settings', { values: { model: suggestion.key } });
+      LS.toast(`Now using ${suggestion.label} for every project.`, 'ok');
+      location.reload();
+    } catch (err) {
+      LS.toast(err.message, 'error');
+    }
+  }
+
+  document.querySelectorAll('input[name="operation"]').forEach((radio) => {
+    radio.addEventListener('change', async () => {
+      if (!radio.checked) return;
+      operation = radio.value === 'translate' ? 'translate' : 'transcribe';
+      render();          // labels, buttons, explanations, compatibility: immediately
+      try {
+        // Per project. This never rewrites the Settings default, and it
+        // never touches a recording that already has a result.
+        await LS.put(`/api/projects/${encodeURIComponent(slug)}`, { operation });
+      } catch (err) {
+        LS.toast(`Could not remember this choice for the project: ${err.message}`, 'warn');
+      }
+    });
+  });
+
+  if (languageSelect) languageSelect.addEventListener('change', renderOperation);
 
   async function refresh() {
     try {
@@ -134,14 +343,13 @@
       if (button.dataset.act === 'del') {
         const doc = documents.find((d) => d.id === id);
         const name = doc ? doc.filename : 'this file';
-        if (!confirm(
-          `Remove "${name}"?\n\nThis permanently deletes the media file, its ` +
-          `transcript, and every exported output for it.`
-        )) return;
-        const snapshot = confirm(
-          'Create a local recovery snapshot of the whole project first?\n\n' +
-          'Choose Cancel to continue without a snapshot.'
-        );
+        const choice = await confirmRemoval({
+          title: `Remove "${name}"?`,
+          message: 'This permanently deletes the media file, its transcript or ' +
+            'translation, and every exported output for it. This cannot be undone.',
+        });
+        if (!choice) return;
+        const snapshot = choice === 'snapshot';
         button.disabled = true;
         try {
           await LS.del(
@@ -159,7 +367,20 @@
       }
 
       if (button.dataset.act === 'one') {
-        await startTranscription([id]);
+        const doc = documents.find((d) => d.id === id);
+        let replace = false;
+        if (doc && doc.status === 'transcribed') {
+          const existing = T(docOperation(doc)).result;
+          const next = T(operation).result;
+          if (!confirm(
+            `"${doc.filename}" already has a ${existing}.\n\n` +
+            `${T(operation).action} will replace it as the current result with a new ${next}. ` +
+            `The earlier ${existing} is kept in this recording's Edit history, where it can be restored.\n\n` +
+            'Continue?'
+          )) return;
+          replace = true;
+        }
+        await startTranscription([id], replace);
       }
     });
   }
@@ -167,24 +388,28 @@
   const refreshBtn = document.getElementById('refresh-btn');
   if (refreshBtn) refreshBtn.addEventListener('click', refresh);
 
-  /* ---------------------------------------------------------- transcribing */
+  /* ----------------------------------------------------------- processing */
 
-  async function startTranscription(ids) {
+  async function startTranscription(ids, replace) {
     if (window.LSConsole) LSConsole.open();
     if (transcribeBtn) transcribeBtn.disabled = true;
 
+    // Sent explicitly, so a run uses exactly what the page shows rather than
+    // whatever the saved defaults happen to be by the time the job starts.
+    const language = languageSelect ? languageSelect.value : undefined;
+    const body = ids
+      ? { documents: ids, force: true, replace: !!replace, language, operation }
+      : { language, operation };
+
     try {
-      const result = await LS.post(`/api/projects/${encodeURIComponent(slug)}/transcribe`,
-        { ...(ids ? { documents: ids, force: true } : {}), operation });
+      const result = await LS.post(`/api/projects/${encodeURIComponent(slug)}/transcribe`, body);
       documents = result.documents || documents;
       render();
 
       if (result.queued.length) {
         LS.toast(
-          `Queued ${LS.plural(result.queued.length, 'file')} for ${
-            operation === 'translate' ? 'translation' : 'transcription'
-          }. ` +
-          `Watch the console for progress.`, 'ok');
+          `Queued ${LS.plural(result.queued.length, 'file')} (${T(operation).action}). ` +
+          'Watch the console for progress.', 'ok');
       }
       if (result.skipped.length && !result.queued.length) {
         const reasons = [...new Set(result.skipped.map((s) => s.reason))].join('; ');
@@ -206,28 +431,7 @@
   }
 
   if (transcribeBtn) {
-    transcribeBtn.addEventListener('click', () => startTranscription(null));
-  }
-
-  if (operationPicker) {
-    operationPicker.addEventListener('change', async (event) => {
-      const selected = event.target.value;
-      if (!['transcribe', 'translate'].includes(selected) || selected === operation) return;
-      operationPicker.querySelectorAll('input').forEach((input) => { input.disabled = true; });
-      if (operationState) operationState.textContent = 'Saving…';
-      try {
-        await LS.put(`/api/projects/${encodeURIComponent(slug)}`, { operation: selected });
-        operation = selected;
-        render();
-        if (operationState) operationState.textContent = 'Saved';
-      } catch (err) {
-        operationPicker.querySelector(`input[value="${operation}"]`).checked = true;
-        if (operationState) operationState.textContent = 'Not saved';
-        LS.toast(`Could not save operation: ${err.message}`, 'error');
-      } finally {
-        operationPicker.querySelectorAll('input').forEach((input) => { input.disabled = false; });
-      }
-    });
+    transcribeBtn.addEventListener('click', () => startTranscription(null, false));
   }
 
   /* Console traffic drives the table: a finished or failed job refreshes it,
@@ -253,7 +457,6 @@
   const pickBtn = document.getElementById('pick-files');
   const progress = document.getElementById('upload-progress');
   const progressFill = progress ? progress.firstElementChild : null;
-  const uploadStatus = document.getElementById('upload-status');
 
   if (pickBtn && fileInput) pickBtn.addEventListener('click', () => fileInput.click());
   if (fileInput) {
@@ -332,7 +535,7 @@
       const rejected = payload.rejected || [];
       if (uploadStatus) {
         uploadStatus.textContent = added
-          ? `Added ${LS.plural(added, 'file')}. Press Transcribe when ready.`
+          ? `Added ${LS.plural(added, 'file')}. ${T(operation).upload_hint}`
           : '';
       }
       if (added) LS.toast(`Added ${LS.plural(added, 'file')}.`, 'ok');
@@ -587,6 +790,26 @@
     });
   }
 
+  const openSnapshotFolderBtn = document.getElementById('open-snapshot-folder-btn');
+  if (openSnapshotFolderBtn) {
+    const note = document.getElementById('snapshot-folder-note');
+    openSnapshotFolderBtn.addEventListener('click', async () => {
+      openSnapshotFolderBtn.disabled = true;
+      try {
+        const result = await LS.post(
+          `/api/projects/${encodeURIComponent(slug)}/snapshots/open-folder`
+        );
+        note.textContent = result.opened
+          ? 'Opened this project\'s snapshot folder in your file manager.'
+          : `Could not open a file manager here. This project's snapshots are in: ${result.path}`;
+      } catch (err) {
+        note.textContent = err.message;
+      } finally {
+        openSnapshotFolderBtn.disabled = false;
+      }
+    });
+  }
+
   const restoreSnapshotBtn = document.getElementById('restore-snapshot-btn');
   if (restoreSnapshotBtn) {
     restoreSnapshotBtn.addEventListener('click', async () => {
@@ -619,135 +842,18 @@
     });
   }
 
-  const startBoxBackupBtn = document.getElementById('start-box-backup-btn');
-  const cancelBoxBackupBtn = document.getElementById('cancel-box-backup-btn');
-  const boxBackupStatus = document.getElementById('box-backup-status');
-  let boxBackupJobId = null;
-  let boxBackupPoll = null;
-  let boxBackupReported = null;
-
-  function showBoxBackup(job) {
-    if (!job || !boxBackupStatus) return;
-    const labels = {
-      queued: 'Waiting to start…',
-      running: job.stage === 'building_archive'
-        ? 'Building checksummed archive…'
-        : `Copying archive (${LS.bytes(job.bytes_copied)} of ${LS.bytes(job.total_bytes)})…`,
-      complete: `Backup verified: ${job.filename} (${LS.bytes(job.total_bytes)}).`,
-      failed: `Backup failed: ${job.error || 'Retry the operation.'}`,
-      cancelled: 'Backup cancelled. Any incomplete copy was removed.',
-    };
-    boxBackupStatus.textContent = labels[job.status] || 'Checking backup status…';
-    const active = job.status === 'queued' || job.status === 'running';
-    startBoxBackupBtn.disabled = active;
-    cancelBoxBackupBtn.hidden = !active;
-    if (job.status === 'complete' && job.verified
-        && boxBackupReported !== job.job_id) {
-      boxBackupReported = job.job_id;
-      LS.toast('Box Sync copy completed and checksum verification passed.', 'ok');
-    }
-    if (!active && boxBackupPoll) {
-      clearInterval(boxBackupPoll);
-      boxBackupPoll = null;
-    }
-  }
-
-  async function pollBoxBackup() {
-    if (!boxBackupJobId) return;
-    try {
-      const result = await LS.get(
-        `/api/projects/${encodeURIComponent(slug)}/box-backup` +
-        `?job_id=${encodeURIComponent(boxBackupJobId)}`
-      );
-      showBoxBackup(result.backup);
-    } catch (err) {
-      if (boxBackupStatus) boxBackupStatus.textContent = err.message;
-      if (boxBackupPoll) clearInterval(boxBackupPoll);
-      boxBackupPoll = null;
-    }
-  }
-
-  if (startBoxBackupBtn) {
-    startBoxBackupBtn.addEventListener('click', async () => {
-      const syncConfirmed =
-        document.getElementById('confirm-box-sync-destination').checked;
-      if (!syncConfirmed) {
-        LS.toast('Confirm your selected folder is managed by your Box Sync client.', 'warn');
-        return;
-      }
-      if (!confirm(
-        'Copy a checksummed archive of this project into the configured local ' +
-        'Box Sync folder? The Box Sync client may upload it according to your ' +
-        'institutional account and folder policy.'
-      )) return;
-
-      startBoxBackupBtn.disabled = true;
-      boxBackupStatus.textContent = 'Starting explicit backup…';
-      try {
-        const result = await LS.post(
-          `/api/projects/${encodeURIComponent(slug)}/box-backup`,
-          {
-            confirm_sync_destination: true,
-            independently_verified_box_health:
-              document.getElementById('confirm-box-health').checked,
-            include_media:
-              document.getElementById('box-backup-include-media').checked,
-          }
-        );
-        boxBackupJobId = result.backup.job_id;
-        showBoxBackup(result.backup);
-        if (!boxBackupPoll) boxBackupPoll = setInterval(pollBoxBackup, 700);
-      } catch (err) {
-        boxBackupStatus.textContent = err.message;
-        startBoxBackupBtn.disabled = false;
-      }
-    });
-  }
-
-  if (cancelBoxBackupBtn) {
-    cancelBoxBackupBtn.addEventListener('click', async () => {
-      if (!boxBackupJobId) return;
-      cancelBoxBackupBtn.disabled = true;
-      try {
-        await LS.post(
-          `/api/projects/${encodeURIComponent(slug)}/box-backup/` +
-          `${encodeURIComponent(boxBackupJobId)}/cancel`
-        );
-        boxBackupStatus.textContent = 'Cancellation requested…';
-      } catch (err) {
-        LS.toast(err.message, 'warn');
-      } finally {
-        cancelBoxBackupBtn.disabled = false;
-      }
-    });
-  }
-
-  if (startBoxBackupBtn) {
-    LS.get(`/api/projects/${encodeURIComponent(slug)}/box-backup`)
-      .then((result) => {
-        const job = result.backup;
-        boxBackupJobId = job.job_id;
-        showBoxBackup(job);
-        if (job.status === 'queued' || job.status === 'running') {
-          boxBackupPoll = setInterval(pollBoxBackup, 700);
-        }
-      })
-      .catch(() => {});
-  }
-
   const deleteBtn = document.getElementById('delete-project-btn');
   if (deleteBtn) {
     deleteBtn.addEventListener('click', async () => {
       const count = documents.length;
-      if (!confirm(
-        `Delete this entire project?\n\nThis permanently removes ` +
-        `${LS.plural(count, 'recording')}, all transcripts, and all exported ` +
-        `files. Existing recovery snapshots are kept.`
-      )) return;
-      const snapshot = confirm(
-        'Create a local recovery snapshot of the whole project first?\n\n' +
-        'Choose Cancel to continue without a new snapshot.'
-      );
+      const choice = await confirmRemoval({
+        title: 'Delete this entire project?',
+        message: `This permanently removes ${LS.plural(count, 'recording')}, all ` +
+          'transcripts and translations, and all exported files. Existing recovery ' +
+          'snapshots are kept. This cannot be undone.',
+      });
+      if (!choice) return;
+      const snapshot = choice === 'snapshot';
 
       try {
         await LS.del(

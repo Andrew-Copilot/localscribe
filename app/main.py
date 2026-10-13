@@ -37,6 +37,7 @@ from . import (
     folder_picker,
     health,
     handoff,
+    languages,
     media,
     proofread,
     projects,
@@ -122,7 +123,26 @@ async def same_origin_guard(request: Request, call_next):
     # Never advertise cross-origin access, and keep the app out of caches.
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
+    # Static files carry Last-Modified but no freshness lifetime, so browsers reuse
+    # an old copy by heuristic and a fixed template runs with stale JS/CSS.
+    # no-cache still allows cheap ETag revalidation (a 304) on every load.
+    response.headers.setdefault("Cache-Control", "no-cache")
     return response
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception):
+    """Give the page a readable message; the exception type is logged, never its content."""
+    CONSOLE.error(
+        f"Unexpected error handling {request.method} {request.url.path}: {type(exc).__name__}"
+    )
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(
+            {"detail": "Local Scribe hit an unexpected problem. See the console "
+                       "for the error type."},
+            status_code=500,
+        )
+    return Response("Internal Server Error", status_code=500, media_type="text/plain")
 
 
 def require_same_origin_ws(websocket: WebSocket) -> bool:
@@ -168,7 +188,7 @@ async def on_startup() -> None:
     if not status["model_downloaded"]:
         spec = catalog.model_spec(status["selected_model"])
         CONSOLE.warn(
-            f"No Whisper model is downloaded yet. Open AI Settings and "
+            f"No Whisper model is downloaded yet. Open Settings and "
             f"download {spec.label if spec else status['selected_model']} "
             f"({spec.download_mb if spec else '?'} MB) before transcribing.",
         )
@@ -221,10 +241,10 @@ async def page_index(request: Request):
             request,
             projects=projects.list_projects(),
             snapshots=projects.list_all_snapshots(),
-            activities=[
-                event for event in activity.recent()
-                if activity.category(event.get("action")) == "recovery"
-            ],
+            activities=activity.history_rows([
+                event for event in activity.recent(limit=activity.HISTORY_LIMIT)
+                if "recovery" in activity.groups(event.get("action"))
+            ])[:10],
         ),
     )
 
@@ -245,22 +265,63 @@ async def page_project(request: Request, slug: str):
             documents=projects.list_documents(slug),
             stats=projects.project_stats(slug),
             snapshots=projects.list_snapshots(slug),
-            activities=[
+            activities=activity.history_rows([
                 event for event in activity.recent(
-                    project.get("project_id") or project["slug"]
+                    project.get("project_id") or project["slug"],
+                    limit=activity.HISTORY_LIMIT,
                 )
-                if activity.category(event.get("action")) == "recovery"
-            ],
-            box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
-            operation=projects.project_operation(project),
+                if "recovery" in activity.groups(event.get("action"))
+            ])[:10],
+            backup=box_sync.describe(slug),
             vocabulary_profiles=profiles,
             vocabulary_profile_available=any(
                 item["id"] == project.get("vocabulary_profile_id")
                 for item in profiles
             ),
             accepted=sorted(media.MEDIA_EXTENSIONS),
+            language_choices=languages.choices(),
+            default_language=languages.coerce(
+                project.get("transcription_language") or SETTINGS.get("language")
+            ),
+            operation=projects.project_operation(project),
+            terms=languages.terms(projects.project_operation(project)),
+            operation_info=operation_info(),
         ),
     )
+
+
+def operation_info() -> dict:
+    """What the project page needs to explain each operation immediately.
+
+    Computed once on the server (so the rules live in one place) and handed to
+    the page, which switches between the two entries without a round trip.
+    """
+    status = ENGINE.status()
+    hardware = ENGINE.hardware()
+    key = status["selected_model"]
+    spec = catalog.model_spec(key)
+    compat = {}
+    for operation in languages.OPERATIONS:
+        problem = catalog.operation_problem(key, operation, hardware)
+        support = (
+            catalog.translation_support(spec)
+            if operation == languages.TRANSLATE else {"level": catalog.OK, "reason": ""}
+        )
+        compat[operation] = {
+            "ok": problem is None,
+            "level": support["level"],
+            "message": problem or support["reason"],
+        }
+    return {
+        "model": {
+            "key": key,
+            "label": status["selected_model_label"],
+            "downloaded": bool(status["model_downloaded"]),
+        },
+        "compat": compat,
+        "suggestion": catalog.suggest_translation_model(hardware),
+        "terms": languages.TERMS,
+    }
 
 
 @app.get("/project/{slug}/document/{doc_id}", response_class=HTMLResponse)
@@ -282,6 +343,11 @@ async def page_document(request: Request, slug: str, doc_id: str):
             transcript=doc,
             has_transcript=doc is not None,
             info=summary(doc) if doc else None,
+            doc_terms=languages.terms(
+                languages.operation_of(doc) if doc else (
+                    record.get("pending_operation") or projects.project_operation(project)
+                )
+            ),
             outputs=projects.list_outputs(slug, doc_id),
             revisions=projects.list_revisions(slug, doc_id),
             speakers=speaker_roster(doc) if doc else [],
@@ -292,10 +358,13 @@ async def page_document(request: Request, slug: str, doc_id: str):
                 "spelling": bool(SETTINGS.get("proofread_spelling", True)),
                 "artefacts": bool(SETTINGS.get("proofread_artefacts", True)),
                 "available": proofread.DICTIONARY.available,
-                "language_supported": proofread.supports_language(
-                    (doc or {}).get("language")
-                ),
+                # The checks are English-only; the editor switches them off
+                # and says why for any other transcript language.
+                "language_supported": proofread.supports_document(doc),
+                "language": languages.output_language(doc or {}),
+                "language_name": languages.name(languages.output_language(doc or {})),
             },
+            spaceless=languages.doc_is_spaceless(doc or {}),
         ),
     )
 
@@ -320,28 +389,30 @@ async def page_settings(request: Request):
 
 @app.get("/privacy", response_class=HTMLResponse)
 async def page_privacy(request: Request):
-    events = activity.recent()
-    for event in events:
-        event["category"] = activity.category(event.get("action"))
-    last_remote_action = next(
-        (event for event in reversed(events)
-         if event["category"] == "network"),
-        None,
-    )
+    events = activity.recent(limit=activity.HISTORY_LIMIT)
+    listing = projects.list_projects()
+    rows = activity.history_rows(events, activity.title_index(listing))
+    backup_summary = {
+        "total": len(listing),
+        "with_folder": sum(
+            bool(projects.load_backup_record(p["slug"])["destination"]) for p in listing
+        ),
+    }
     return templates.TemplateResponse(
         request,
         "privacy.html",
         base_context(
             request,
             values=SETTINGS.all(),
+            backup_summary=backup_summary,
             storage_paths={
                 "projects": str(PATHS.projects),
                 "models": str(PATHS.models),
                 "logs": str(PATHS.logs),
                 "settings": str(PATHS.settings_file),
             },
-            activities=events,
-            last_remote_action=last_remote_action,
+            activities=rows,
+            activity_counts=activity.filter_counts(rows),
             activity_labels=activity.LABELS,
         ),
     )
@@ -468,7 +539,7 @@ async def api_folder_picker(request: Request):
         selected = await asyncio.to_thread(
             folder_picker.choose_folder, str(initial_path or "")
         )
-    except Exception as exc:
+    except folder_picker.FolderPickerUnavailable as exc:
         raise HTTPException(
             status_code=503,
             detail="A desktop folder picker is unavailable. Enter the folder path manually.",
@@ -543,7 +614,7 @@ async def api_save_settings(request: Request):
 @app.post("/api/settings/reset")
 async def api_reset_settings():
     before = SETTINGS.all()
-    values = SETTINGS.reset()
+    values = SETTINGS.reset(keep=("box_sync_destination",))
     if before.get("offline_lock") != values.get("offline_lock"):
         activity.record(
             "offline_lock_changed",
@@ -577,7 +648,7 @@ async def api_download_model(model_key: str):
     if SETTINGS.get("offline_lock"):
         raise HTTPException(
             status_code=409,
-            detail="The offline lock is engaged. Turn it off in AI Settings to "
+            detail="The offline lock is engaged. Turn it off in Settings to "
                    "download a model, then turn it back on.",
         )
     job = QUEUE.submit_download(model_key)
@@ -890,6 +961,28 @@ async def api_uncertain_terms_report(slug: str):
     )
 
 
+def _create_snapshot_or_fail(slug: str, project: dict, **options) -> dict:
+    """Create a recovery snapshot; on failure say so and leave the project untouched."""
+    try:
+        return projects.create_snapshot(slug, **options)
+    except projects.ProjectError:
+        raise
+    except Exception as exc:
+        activity.record(
+            "snapshot_create", project.get("project_id") or project["slug"], "failed",
+        )
+        CONSOLE.error(
+            f"Could not create a recovery snapshot ({type(exc).__name__}); "
+            "nothing was changed.", slug=slug,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="The recovery snapshot could not be created, so nothing was "
+                   "changed. Check free disk space and try again, or continue "
+                   "without a snapshot.",
+        ) from exc
+
+
 @app.delete("/api/projects/{slug}")
 async def api_delete_project(slug: str, snapshot: bool | None = None):
     if snapshot is None:
@@ -900,7 +993,7 @@ async def api_delete_project(slug: str, snapshot: bool | None = None):
     try:
         record = projects.load_project(slug)
         if snapshot:
-            projects.create_snapshot(slug)
+            _create_snapshot_or_fail(slug, record)
         projects.delete_project(slug)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -950,7 +1043,7 @@ async def api_upload(slug: str, files: list[UploadFile]):
                 slug, record["id"],
                 duration=round(info.duration or 0.0, 3) or None,
                 media=info.to_dict(),
-                status_detail=f"{media.describe(info)} - ready to transcribe",
+                status_detail=media.describe(info),
             )
             CONSOLE.success(
                 f"Added {name} ({fmt_bytes(record.get('size_bytes'))}) - "
@@ -984,7 +1077,7 @@ async def api_delete_document(slug: str, doc_id: str, snapshot: bool | None = No
         project = projects.load_project(slug)
         record = projects.load_document(slug, doc_id)
         if snapshot:
-            projects.create_snapshot(slug)
+            _create_snapshot_or_fail(slug, project)
         projects.delete_document(slug, doc_id)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1006,51 +1099,70 @@ async def api_transcribe(slug: str, request: Request):
         payload = {}
     wanted = payload.get("documents") if isinstance(payload, dict) else None
     force = bool(payload.get("force")) if isinstance(payload, dict) else False
+    # Replacing an existing result is an explicit, separate consent.
+    replace = bool(payload.get("replace")) if isinstance(payload, dict) else False
+
+    # What to do: an explicit choice for this run, otherwise the project's.
+    explicit_operation = None
+    if isinstance(payload, dict) and payload.get("operation") not in (None, ""):
+        explicit_operation = languages.parse_operation(payload.get("operation"))
+        if explicit_operation is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{payload.get('operation')}' is not a supported operation. "
+                       "Use 'transcribe' or 'translate'.",
+            )
+
+    # The spoken language: an explicit choice for this run, then the
+    # project's saved choice, then the Settings default. "auto" means
+    # detect it from the audio.
+    explicit = None
+    if isinstance(payload, dict) and payload.get("language") not in (None, ""):
+        explicit = languages.parse(payload.get("language"))
+        if explicit is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{payload.get('language')}' is not a supported language.",
+            )
 
     try:
         project = projects.load_project(slug)
         documents = projects.list_documents(slug)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    operation = payload.get("operation") if isinstance(payload, dict) else None
-    if operation is None:
-        operation = projects.project_operation(project)
-    if operation not in ("transcribe", "translate"):
-        raise HTTPException(
-            status_code=400,
-            detail="Operation must be transcribe or translate.",
-        )
+
+    language = explicit or languages.coerce(
+        project.get("transcription_language") or SETTINGS.get("language")
+    )
+    operation = explicit_operation or projects.project_operation(project)
+    terms = languages.terms(operation)
 
     status = ENGINE.status()
+    spec = catalog.model_spec(status["selected_model"])
     if not status["model_downloaded"]:
-        spec = catalog.model_spec(status["selected_model"])
         raise HTTPException(
             status_code=409,
             detail=(
                 f"{spec.label if spec else status['selected_model']} has not "
-                "been downloaded yet. Open AI Settings and download it first."
+                "been downloaded yet. Open Settings and download it first."
             ),
         )
-    spec = catalog.model_spec(status["selected_model"])
-    spoken_language = str(SETTINGS.get("language") or "auto").strip().lower()
-    if (
-        operation == "translate"
-        and spec
-        and spec.languages == "English only"
-        and not (
-            spoken_language == "english"
-            or spoken_language == "en"
-            or spoken_language.startswith(("en-", "en_"))
-        )
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Translate to English needs a multilingual Whisper model for "
-                "non-English speech. Choose one in AI Settings or set the spoken "
-                "language to English."
-            ),
-        )
+
+    # Enforced here, not just in the page: an unsuitable model never enters
+    # the queue, whichever client sent the request.
+    problem = catalog.operation_problem(
+        status["selected_model"], operation, ENGINE.hardware()
+    )
+    if problem:
+        raise HTTPException(status_code=409, detail=problem)
+
+    problem = languages.unsupported_reason(
+        language,
+        model_key=status["selected_model"],
+        english_only=bool(spec and spec.languages == "English only"),
+    )
+    if problem:
+        raise HTTPException(status_code=409, detail=problem)
 
     queued, skipped = [], []
     for record in documents:
@@ -1063,29 +1175,50 @@ async def api_transcribe(slug: str, request: Request):
         if record["status"] in ("queued", "probing", "decoding", "transcribing"):
             skipped.append({"id": doc_id, "reason": "Already in progress"})
             continue
-        if record["status"] == "transcribed" and not force and not wanted:
-            skipped.append({"id": doc_id, "reason": "Already transcribed"})
+
+        existing = languages.terms(record.get("operation"))
+        has_result = bool(record.get("has_transcript")) or record["status"] == "transcribed"
+        if has_result and not force and not wanted:
+            skipped.append({"id": doc_id, "reason": f"Already {existing['done'].lower()}"})
+            continue
+        if has_result and not replace:
+            # Never overwrite a finished result without being told to. The
+            # earlier version is kept in Edit history either way.
+            skipped.append({
+                "id": doc_id,
+                "needs_confirmation": True,
+                "reason": (
+                    f"This recording already has a {existing['result']}. Confirm to "
+                    f"replace it with a new {terms['result']}; the earlier one is "
+                    "kept in Edit history."
+                ),
+            })
             continue
 
         job = QUEUE.submit_transcription(
-            slug, doc_id, record["filename"], operation=operation
+            slug, doc_id, record["filename"], language=language, operation=operation,
         )
         projects.set_status(slug, doc_id, "queued", "Waiting in the queue")
+        projects.update_document(slug, doc_id, pending_operation=operation)
         queued.append({"id": doc_id, "job": job.id, "filename": record["filename"]})
 
     if not queued:
-        action = "translate" if operation == "translate" else "transcribe"
-        CONSOLE.info(f"Nothing to {action}: every file is done or in progress.")
+        CONSOLE.info(
+            f"Nothing to {terms['action'].lower()}: every file is done, in progress, "
+            "or waiting for confirmation to be replaced."
+        )
     else:
-        action = "translation" if operation == "translate" else "transcription"
         CONSOLE.step(
-            f"Queued {len(queued)} file(s) for {action}",
+            terms["queued"].format(n=f"{len(queued)} file(s)"),
             files=[q["filename"] for q in queued],
+            language=language,
+            operation=operation,
         )
 
     return {
         "queued": queued,
         "skipped": skipped,
+        "operation": operation,
         "documents": projects.list_documents(slug),
         "queue": QUEUE.snapshot(limit=10),
     }
@@ -1112,6 +1245,64 @@ async def api_cancel_all():
 # ---------------------------------------------------------------------------
 # Import / export
 # ---------------------------------------------------------------------------
+
+@app.get("/api/projects/{slug}/backup")
+async def api_get_backup(slug: str):
+    try:
+        return {"backup": box_sync.describe(slug)}
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put("/api/projects/{slug}/backup")
+async def api_set_backup_destination(slug: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    destination = payload.get("destination") if isinstance(payload, dict) else None
+    selection = payload.get("selection") if isinstance(payload, dict) else None
+    if not isinstance(destination, str):
+        raise HTTPException(status_code=400, detail="Expected a 'destination' folder path.")
+    try:
+        box_sync.select_destination(
+            slug, destination, selection if selection in ("manual", "picker") else "manual"
+        )
+        state = box_sync.describe(slug)
+    except box_sync.BackupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record("network_settings_changed", projects.load_project(slug).get("project_id") or slug)
+    return {"backup": state}
+
+
+@app.delete("/api/projects/{slug}/backup")
+async def api_clear_backup_destination(slug: str):
+    try:
+        projects.clear_backup_destination(slug)
+        state = box_sync.describe(slug)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record("network_settings_changed", projects.load_project(slug).get("project_id") or slug)
+    return {"backup": state}
+
+
+@app.post("/api/projects/{slug}/backup/use-previous-folder")
+async def api_use_previous_backup_folder(slug: str):
+    """Explicitly reuse the folder an earlier version saved for every project."""
+    previous = box_sync.legacy_destination()
+    if not previous:
+        raise HTTPException(status_code=409, detail="No earlier shared folder is saved.")
+    try:
+        box_sync.select_destination(slug, previous, "legacy_global")
+        state = box_sync.describe(slug)
+    except box_sync.BackupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"backup": state}
+
 
 @app.post("/api/projects/{slug}/box-backup")
 async def api_start_box_backup(slug: str, request: Request):
@@ -1162,6 +1353,28 @@ async def api_cancel_box_backup(slug: str, job_id: str):
     return {"cancel_requested": True}
 
 
+@app.post("/api/projects/{slug}/snapshots/open-folder")
+async def api_open_snapshot_folder(slug: str):
+    """Show this project's own snapshot folder in the file manager.
+
+    The path is derived from the project, never taken from the request, so only
+    that one folder can be opened. If the file manager cannot be launched the
+    path is returned so it can be opened by hand.
+    """
+    try:
+        project = projects.load_project(slug)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    folder = projects._snapshot_dir(project["slug"])
+    if not folder.is_dir() or not projects.list_snapshots(project["slug"]):
+        raise HTTPException(
+            status_code=409,
+            detail="This project has no snapshots yet. Create one first.",
+        )
+    opened = await asyncio.to_thread(projects.reveal, folder)
+    return {"opened": bool(opened), "path": str(folder)}
+
+
 @app.get("/api/projects/{slug}/snapshots")
 async def api_list_snapshots(slug: str):
     try:
@@ -1181,7 +1394,7 @@ async def api_create_snapshot(slug: str, request: Request):
         raise HTTPException(status_code=400, detail="'include_media' must be a boolean.")
     try:
         project = projects.load_project(slug)
-        snapshot = projects.create_snapshot(slug, include_media=include_media)
+        snapshot = _create_snapshot_or_fail(slug, project, include_media=include_media)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     activity.record("snapshot_create", project.get("project_id") or project["slug"])
@@ -1332,7 +1545,9 @@ def _export_outputs(slug: str, doc_id: str, doc: dict, record: dict, project: di
             doc, generated, successful,
         )
         try:
-            exporters.write_json(doc, out_dir / "transcript.json", settings, meta)
+            exporters.write_json(
+                doc, out_dir / f"{exporters.basename_for(doc)}.json", settings, meta
+            )
         except Exception as exc:
             written["json"] = f"error: {exc}"
     return written
@@ -1699,11 +1914,14 @@ async def api_proofread(slug: str, doc_id: str, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     doc = projects.load_transcript(slug, doc_id) or {}
-    if not proofread.supports_language(doc.get("language")):
+    if not proofread.supports_document(doc):
+        code = languages.output_language(doc)
         return {
             "issues": {},
             "enabled": False,
-            "reason": "Proofreading is currently supported for English transcripts only.",
+            "reason": "language",
+            "language": code,
+            "language_name": languages.name(code),
         }
     profile = vocabulary.get_profile(project.get("vocabulary_profile_id"))
     extra = proofread.extra_words(
@@ -1862,7 +2080,23 @@ async def api_restore_revision(slug: str, doc_id: str, revision_id: str):
     previous["export"] = current.get("export")
     normalise(previous)
     validation.record_restore(previous, revision_id)
+    # Keep what is being replaced, so restoring an earlier result (say the
+    # original-language transcript after a translation) can be undone too.
+    projects.archive_transcript(slug, doc_id)
     projects.save_transcript(slug, doc_id, previous, keep=int(SETTINGS.get("autosave_revisions") or 20))
+    record = projects.load_document(slug, doc_id)
+    project = projects.load_project(slug)
+    exporters.export_all(
+        previous, projects.outputs_dir(slug, doc_id), SETTINGS.all(),
+        {
+            "title": Path(record.get("filename") or "transcript").stem,
+            "filename": record.get("filename"),
+            "project": project.get("title"),
+            "principal_investigator": project.get("principal_investigator"),
+            "irb_protocol": project.get("irb_protocol"),
+            "generated": projects._now(),
+        },
+    )
     CONSOLE.warn(f"Restored transcript revision {revision_id}", document=doc_id)
     return {"transcript": previous, "summary": summary(previous)}
 
@@ -1944,7 +2178,7 @@ async def api_download_all(slug: str, doc_id: str):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in files:
-            archive.write(path, f"{stem}/{path.name}")
+            projects.write_zip_file(archive, path, f"{stem}/{path.name}")
     buffer.seek(0)
 
     name = f"{projects.slugify(stem, 'transcript')}-transcripts.zip"

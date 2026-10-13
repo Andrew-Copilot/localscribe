@@ -6,12 +6,14 @@ Project
 Synthetic regression study (imported)
 Duration
 00:00:03
+Operation
+Transcription (text in the language spoken)
 Words
 7
 Segments
 2
 Language
-es
+Spanish (es)
 Model
 synthetic-fixture
 Review status

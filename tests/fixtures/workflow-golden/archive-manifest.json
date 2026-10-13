@@ -31,18 +31,18 @@
   "files": [
     {
       "path": "documents/fixture-document/document.json",
-      "size_bytes": 668,
-      "sha256": "3eb469337fd07fff3b2141fa3efff59cf341fc9e662eaa9685312a5f23358c1a"
+      "size_bytes": 857,
+      "sha256": "50598fe26154a2fe31af1a0341745f6f56c5be9e94c318fc342695335f7bba46"
     },
     {
       "path": "documents/fixture-document/outputs/synthetic-interview.docx",
-      "size_bytes": 37271,
-      "sha256": "9085ae0525a562255c6589cf9730aa437cca72d621f8ed1a42ae5eeb7013b22c"
+      "size_bytes": 37306,
+      "sha256": "19bfc2c41d81ad7c655212a649047a157745ca5f3a9b7d98c563eac702330549"
     },
     {
       "path": "documents/fixture-document/outputs/synthetic-interview.json",
-      "size_bytes": 4663,
-      "sha256": "4defd2d2cd3a2c68079bc7f0f36fd8b532a562cf37678e6917cec6719cbb4c40"
+      "size_bytes": 5043,
+      "sha256": "0a9d013f73fd07619db5bd952fe680c89b05cc3a50472799eadc0105820adc77"
     },
     {
       "path": "documents/fixture-document/outputs/synthetic-interview.srt",
@@ -56,8 +56,8 @@
     },
     {
       "path": "documents/fixture-document/transcript.json",
-      "size_bytes": 3288,
-      "sha256": "e9d946dd1156da952b12bc7c2fa17d65f615c52885a45a8f4c57f0a17ab95bc4"
+      "size_bytes": 3357,
+      "sha256": "8953f61392b64dfdcef8449d32988c9353fa630d795dbd749e3dfda88ec4d1e4"
     },
     {
       "path": "media/fixture-document__synthetic-interview.wav",
@@ -66,8 +66,8 @@
     },
     {
       "path": "project.json",
-      "size_bytes": 614,
-      "sha256": "92ff71bd1a6ce5e131dbff41d5fd9dabf83e39e92d0cea31385649652bdf3a46"
+      "size_bytes": 675,
+      "sha256": "4316f1953ce802b9db299ca172e1915eeae285cd57d09bad75d9b277934e225d"
     }
   ]
 }

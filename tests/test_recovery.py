@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
+import zipfile
 from contextlib import contextmanager
 from dataclasses import replace
 from io import BytesIO
@@ -29,7 +30,7 @@ def check(label: str, condition: bool, detail: str = "") -> None:
 
 @contextmanager
 def project_root():
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         paths = replace(
             config.PATHS, projects=root / "projects", logs=root / "logs",
@@ -239,6 +240,128 @@ def test_overwrite_import_requires_snapshot_choice():
         asyncio.run(exercise())
 
 
+def test_archive_entries_use_forward_slashes():
+    with project_root():
+        project = projects.create_project("Synthetic zip names")
+        slug = project["slug"]
+        projects.add_document(slug, "synthetic.wav", data=b"synthetic media")
+        archive = projects.export_project(slug, config.PATHS.logs)
+        with zipfile.ZipFile(archive) as bundle:
+            stored = [info.orig_filename for info in bundle.infolist()]
+            check("archive entries are stored with forward slashes",
+                  stored and all("\\" not in name for name in stored), str(stored))
+            check("media entries are present and readable",
+                  any(name.startswith("media/") for name in stored)
+                  and bundle.testzip() is None)
+
+
+def test_failed_snapshot_blocks_deletion():
+    with project_root():
+        with patch("app.update_check.refresh_state_async"), patch.object(
+            config, "install_offline_guard"
+        ):
+            from app import main as web
+        project = projects.create_project("Synthetic failing snapshot")
+        slug = project["slug"]
+        document = projects.add_document(slug, "synthetic.wav", data=b"synthetic")
+
+        async def exercise():
+            from fastapi import HTTPException
+
+            with patch.object(projects, "create_snapshot", side_effect=zipfile.BadZipFile("x")):
+                for label, call in (
+                    ("document", lambda: web.api_delete_document(slug, document["id"], snapshot=True)),
+                    ("project", lambda: web.api_delete_project(slug, snapshot=True)),
+                ):
+                    try:
+                        await call()
+                    except HTTPException as exc:
+                        check(f"{label} deletion reports a failed snapshot clearly",
+                              exc.status_code == 500 and "snapshot" in exc.detail)
+                    else:
+                        check(f"{label} deletion reports a failed snapshot clearly", False)
+            check("a failed snapshot deletes nothing",
+                  projects.load_document(slug, document["id"])["id"] == document["id"])
+            events = activity.recent(project_id=project["project_id"])
+            check("the failed snapshot is recorded without content",
+                  [e["outcome"] for e in events] == ["failed", "failed"]
+                  and all(e["action"] == "snapshot_create" for e in events))
+
+        asyncio.run(exercise())
+
+
+def test_removal_dialog_has_explicit_outcomes():
+    script = (Path(config.__file__).parent / "static" / "js" / "project.js").read_text(
+        encoding="utf-8"
+    )
+    check("removal uses a dialog with three explicit outcomes",
+          "function confirmRemoval" in script
+          and "'Keep it'" in script
+          and "'Remove without a snapshot'" in script
+          and "'Create snapshot, then remove'" in script)
+    check("cancelling the dialog never deletes", "if (!choice) return;" in script)
+    check("the old two-step confirm() chain is gone",
+          "Create a local recovery snapshot of the whole project first" not in script
+          and "Choose Cancel to continue without" not in script)
+
+
+def test_snapshot_media_status_and_open_folder():
+    with project_root():
+        with patch("app.update_check.refresh_state_async"), patch.object(
+            config, "install_offline_guard"
+        ):
+            from app import main as web
+        project = projects.create_project("Synthetic snapshot folder")
+        slug = project["slug"]
+        projects.add_document(slug, "synthetic.wav", data=b"synthetic media")
+        empty = projects.create_project("Synthetic no recordings")
+
+        projects.create_snapshot(slug, include_media=True)
+        projects.create_snapshot(slug, include_media=False)
+        projects.create_snapshot(empty["slug"], include_media=True)
+        media = sorted(item["media"] for item in projects.list_snapshots(slug))
+        check("snapshots say whether source media is included, from their manifest",
+              media == ["included", "omitted"], str(media))
+        check("a project without recordings is described as such",
+              projects.list_snapshots(empty["slug"])[0]["media"] == "none")
+        legacy = projects._snapshot_dir(slug) / "legacy-20200101-000000-aaaaaaaa.lsproj"
+        with zipfile.ZipFile(legacy, "w") as bundle:
+            bundle.writestr("project.json", "{}")
+        check("an older or unreadable archive is reported as unknown, not guessed",
+              next(s for s in projects.list_snapshots(slug)
+                   if s["snapshot_id"] == legacy.name)["media"] == "unknown")
+        legacy.unlink()
+
+        opened = []
+
+        async def exercise():
+            from fastapi import HTTPException
+
+            with patch.object(projects, "reveal", lambda path: opened.append(Path(path)) or True):
+                result = await web.api_open_snapshot_folder(slug)
+            check("the project's own snapshot folder is opened",
+                  result["opened"] and opened == [projects._snapshot_dir(slug)])
+            with patch.object(projects, "reveal", lambda path: False):
+                result = await web.api_open_snapshot_folder(slug)
+            check("if no file manager can open it, the path is returned as a fallback",
+                  result["opened"] is False and result["path"] == str(projects._snapshot_dir(slug)))
+            for label, target, status in (
+                ("a project with no snapshots", projects.create_project("Synthetic bare")["slug"], 409),
+                ("an unknown project", "no-such-project", 404),
+                ("a traversal attempt", "..", 404),
+            ):
+                try:
+                    await web.api_open_snapshot_folder(target)
+                except HTTPException as exc:
+                    check(f"{label} opens nothing ({status})", exc.status_code == status)
+                else:
+                    check(f"{label} opens nothing ({status})", False)
+            check("opening never used another project's folder",
+                  all(path == projects._snapshot_dir(slug) for path in opened))
+
+        asyncio.run(exercise())
+
+
 def main() -> int:
     for test in (
         test_snapshot_and_restore_choices,
@@ -246,6 +369,10 @@ def main() -> int:
         test_activity_is_bounded_and_filtered,
         test_deleted_project_can_be_restored,
         test_overwrite_import_requires_snapshot_choice,
+        test_archive_entries_use_forward_slashes,
+        test_failed_snapshot_blocks_deletion,
+        test_removal_dialog_has_explicit_outcomes,
+        test_snapshot_media_status_and_open_folder,
     ):
         print(f"\n{test.__name__}")
         test()

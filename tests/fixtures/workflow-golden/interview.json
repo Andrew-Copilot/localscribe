@@ -22,9 +22,19 @@
     "words": 7,
     "duration": 3.0,
     "language": "es",
+    "language_name": "Spanish",
+    "language_probability": 0.99,
+    "language_requested": "",
+    "output_language": "es",
+    "output_language_name": "Spanish",
+    "operation": "transcribe",
+    "output_status": "original",
+    "spaceless": false,
+    "rtl": false,
     "model": "synthetic-fixture",
     "human_edited": true,
     "retimestamped_at": "2026-01-02T03:04:05+00:00",
+    "confidence_meaningful": true,
     "low_confidence": 1,
     "speakers": [
       "Entrevistadora",
@@ -52,6 +62,9 @@
     "updated": "2026-01-02T03:04:05+00:00",
     "language": "es",
     "language_probability": 0.99,
+    "language_requested": "",
+    "operation": "",
+    "output_check": {},
     "duration": 3.0,
     "model": "synthetic-fixture",
     "engine": {
@@ -101,7 +114,7 @@
         "srt",
         "vtt"
       ],
-      "source_sha256": "a0081af4e597bccde2016ef6acc7be535a577a7e4d31f5094c51e9d7fd6589e9"
+      "source_sha256": "4ffcea0c9e1234e72eeb7029d36c4130863507d7f3158eedaf0d6b50673c9b8f"
     },
     "speakers": [
       {

@@ -1,4 +1,4 @@
-/* Privacy Center: preview sanitized diagnostics, then save only on request. */
+/* Activity & Diagnostics: preview sanitized diagnostics, then save only on request. */
 
 (() => {
   const previewButton = document.getElementById('preview-diagnostics');

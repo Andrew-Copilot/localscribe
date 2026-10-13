@@ -139,34 +139,38 @@ def test_override_record():
             slug = projects.create_project("Synthetic override", data_sensitivity=value)["slug"]
             path = projects.project_dir(slug) / projects.PROJECT_FILE
             before = path.read_bytes()
-            rejects("no implicit override", lambda: projects.record_box_health_override(slug, destination))
-            check("failed override makes no write", path.read_bytes() == before)
+            rejects("no implicit override", lambda: projects.record_backup_attestation(slug, destination))
+            check("failed override makes no write", path.read_bytes() == before
+                  and not (projects.project_dir(slug) / projects.BACKUP_FILE).exists())
             if value == "no_phi":
-                rejects("no override for no_phi", lambda: projects.record_box_health_override(
+                rejects("no override for no_phi", lambda: projects.record_backup_attestation(
                     slug, destination, independently_verified_box_health=True,
                 ))
                 continue
-            record = projects.record_box_health_override(
+            record = projects.record_backup_attestation(
                 slug, destination, independently_verified_box_health=True,
             )
-            audit = record["box_health_override"]
-            check("minimal audit fields", set(audit) == {
-                "confirmed_at", "destination_root", "independently_verified_box_health",
-            })
+            audit = record["attestation"]
+            check("minimal audit fields", set(audit) == {"confirmed_at", "destination_root"})
             check("timestamp and selected path", bool(datetime.fromisoformat(audit["confirmed_at"]).tzinfo)
                   and audit["destination_root"] == str(destination))
-            check("override persisted", projects.load_project(slug)["box_health_override"] == audit)
+            check("override persisted locally", projects.load_backup_record(slug)["attestation"] == audit)
+            check("override is not stored in the exportable project record",
+                  "box_health_override" not in projects.load_project(slug))
             projects.save_project(slug, {"box_health_override": {"destination_root": "Box"}})
-            check("generic edits cannot forge override", projects.load_project(slug)["box_health_override"] == audit)
+            check("generic edits cannot forge override",
+                  "box_health_override" not in projects.load_project(slug)
+                  and projects.load_backup_record(slug)["attestation"] == audit)
             check("audit does not authorize ordinary Box", not future_backup_gate(value, "Box").allowed)
-            projects.record_box_health_override(slug, root / "Another verified root",
+            projects.record_backup_attestation(slug, root / "Another verified root",
                                                independently_verified_box_health=True)
-            check("only latest audit retained", projects.load_project(slug)["box_health_override"]["destination_root"]
+            check("only latest audit retained",
+                  projects.load_backup_record(slug)["attestation"]["destination_root"]
                   == str(root / "Another verified root"))
-            rejects("relative destination rejected", lambda: projects.record_box_health_override(
+            rejects("relative destination rejected", lambda: projects.record_backup_attestation(
                 slug, Path("relative"), independently_verified_box_health=True,
             ))
-            rejects("recognized destination needs no override", lambda: projects.record_box_health_override(
+            rejects("recognized destination needs no override", lambda: projects.record_backup_attestation(
                 slug, root / "[Box Health - Synthetic]", independently_verified_box_health=True,
             ))
 

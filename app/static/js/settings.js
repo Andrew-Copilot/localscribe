@@ -1,4 +1,4 @@
-/* AI Settings: collect the schema-generated form, model downloads, GPU setup. */
+/* Settings: collect the schema-generated form, model downloads, GPU setup. */
 
 (() => {
   const form = document.getElementById('settings-form');
@@ -45,29 +45,8 @@
     if (!state) return;
     state.textContent = text;
     state.className = `save-state ${cls || ''}`.trim();
-  }
-
-  const browseBoxFolder = document.getElementById('browse-box-folder');
-  if (browseBoxFolder) {
-    browseBoxFolder.addEventListener('click', async () => {
-      const path = document.getElementById('f-box_sync_destination');
-      browseBoxFolder.disabled = true;
-      browseBoxFolder.textContent = 'Choosing…';
-      try {
-        const result = await LS.post('/api/folder-picker', {
-          initial_path: path.value.trim(),
-        });
-        if (result.path) {
-          path.value = result.path;
-          path.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-      } catch (err) {
-        LS.toast(`Could not open a folder picker: ${err.message}. You can enter the path manually.`, 'warn', 9000);
-      } finally {
-        browseBoxFolder.disabled = false;
-        browseBoxFolder.textContent = 'Browse…';
-      }
-    });
+    const bar = document.getElementById('settings-actions');
+    if (bar) bar.classList.toggle('is-dirty', cls === 'dirty');
   }
 
   if (form) {
@@ -95,7 +74,7 @@
         }
       }
 
-      const submit = form.querySelector('button[type=submit]');
+      const submit = document.querySelector('button[type=submit][form="settings-form"]');
       submit.disabled = true;
       setState('Saving...');
 
@@ -164,22 +143,26 @@
 
   /* ------------------------------------------------------- recommendation */
 
-  const applyRec = document.getElementById('apply-rec');
-  if (applyRec) {
-    applyRec.addEventListener('click', () => {
-      const setField = (id, value) => {
-        const el = document.getElementById(id);
+  /* Two recommendations: Turbo is the right transcription default but cannot
+     translate, so translation has its own. Either only fills the form; nothing
+     changes until Save settings is pressed. */
+  [['apply-rec', 'Transcription'], ['apply-rec-translate', 'Translation']].forEach(([id, kind]) => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    button.addEventListener('click', () => {
+      const setField = (fieldId, value) => {
+        const el = document.getElementById(fieldId);
         if (!el) return;
         el.value = value;
         el.dispatchEvent(new Event('change', { bubbles: true }));
       };
-      setField('f-model', applyRec.dataset.model);
-      setField('f-compute_type', applyRec.dataset.compute);
-      setField('f-device', applyRec.dataset.device === 'cuda' ? 'auto' : applyRec.dataset.device);
-      setState('Recommendation applied - press Save settings', 'dirty');
-      LS.toast('Recommendation filled in. Press Save settings to apply it.', 'info');
+      setField('f-model', button.dataset.model);
+      setField('f-compute_type', button.dataset.compute);
+      setField('f-device', button.dataset.device === 'cuda' ? 'auto' : button.dataset.device);
+      setState(`${kind} recommendation applied - press Save settings`, 'dirty');
+      LS.toast(`${kind} recommendation filled in. Press Save settings to apply it.`, 'info');
     });
-  }
+  });
 
   const recheck = document.getElementById('recheck-hw');
   if (recheck) {

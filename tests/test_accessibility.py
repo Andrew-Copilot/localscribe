@@ -70,6 +70,19 @@ def test_landmarks_and_keyboard_entry():
           and "model marked multilingual" in settings)
 
 
+def test_settings_save_controls_stay_reachable():
+    settings = SETTINGS.read_text(encoding="utf-8")
+    script = (ROOT / "app" / "static" / "js" / "settings.js").read_text(encoding="utf-8")
+    check("the Save button submits the settings form from the sticky bar",
+          'type="submit" form="settings-form"' in settings
+          and settings.index("</form>") < settings.index('id="settings-actions"'))
+    check("the sticky bar is a named region with a polite status",
+          'aria-label="Save or restore settings"' in settings
+          and 'id="settings-state" role="status" aria-live="polite"' in settings)
+    check("unsaved changes are shown with text and a visual state",
+          "is-dirty" in script and "'dirty'" in script)
+
+
 def test_keyboard_speaker_workflow_and_color_cues():
     editor = EDITOR.read_text(encoding="utf-8")
     speakers = SPEAKERS.read_text(encoding="utf-8")
@@ -103,6 +116,7 @@ def test_focus_scaling_contrast_and_motion_preferences():
 def main() -> int:
     for test in (
         test_landmarks_and_keyboard_entry,
+        test_settings_save_controls_stay_reachable,
         test_keyboard_speaker_workflow_and_color_cues,
         test_focus_scaling_contrast_and_motion_preferences,
     ):

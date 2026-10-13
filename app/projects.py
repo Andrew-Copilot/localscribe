@@ -35,6 +35,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .config import PATHS, SETTINGS, app_version
+from . import languages
 from .sensitivity import DEFAULT_SENSITIVITY, future_backup_gate, normalize_sensitivity, validate_sensitivity
 from .transcript import summary as transcript_summary
 
@@ -56,6 +57,7 @@ EDITABLE_FIELDS = (
     "vocabulary_profile_id",
     "tags",
     "data_sensitivity",
+    "transcription_language",
     "operation",
 )
 
@@ -88,17 +90,7 @@ def _validate_sensitivity(value) -> str:
 
 def _normalize_project(record: dict) -> dict:
     record["data_sensitivity"] = normalize_sensitivity(record.get("data_sensitivity"))
-    if record.get("operation") not in ("transcribe", "translate"):
-        record.pop("operation", None)
     return record
-
-
-def project_operation(project: dict) -> str:
-    operation = project.get("operation")
-    if operation in ("transcribe", "translate"):
-        return operation
-    default = SETTINGS.get("task")
-    return default if default in ("transcribe", "translate") else "transcribe"
 
 
 def _now() -> str:
@@ -178,6 +170,18 @@ def write_json(path: Path, payload) -> Path:
 # Projects
 # ---------------------------------------------------------------------------
 
+def project_operation(project: dict) -> str:
+    """The operation a project is currently set to. Projects with none saved
+    (made before the choice existed) are Transcribe."""
+    return languages.parse_operation(project.get("operation"), languages.TRANSCRIBE) or languages.TRANSCRIBE
+
+
+def clean_language(value) -> str | None:
+    """A project's language choice: \"\" (none), \"auto\", a code, or None if invalid."""
+    text = str(value if value is not None else "").strip()
+    return languages.parse(text) if text else ""
+
+
 def new_project_record(title: str, **fields) -> dict:
     record = {
         "project_id": uuid4().hex,
@@ -190,6 +194,8 @@ def new_project_record(title: str, **fields) -> dict:
         "consent_notes": "",
         "glossary": "",
         "vocabulary_profile_id": "",
+        "transcription_language": "",   # "" = use the Settings default
+        "operation": "",                 # "" = transcribe (projects made before this existed)
         "tags": [],
         "data_sensitivity": DEFAULT_SENSITIVITY,
         "created": _now(),
@@ -200,20 +206,19 @@ def new_project_record(title: str, **fields) -> dict:
         if key == "data_sensitivity" and key in fields:
             record[key] = _validate_sensitivity(fields[key])
             continue
-        if key == "operation" and key in fields:
-            operation = fields[key]
-            if operation not in ("transcribe", "translate"):
-                raise ProjectValidationError(
-                    "Operation must be transcribe or translate."
-                )
-            record[key] = operation
-            continue
         if key in fields and fields[key] is not None:
             record[key] = fields[key]
+    record["transcription_language"] = clean_language(record["transcription_language"]) or ""
+    record["operation"] = languages.parse_operation(record["operation"]) or ""
     return record
 
 
 def create_project(title: str, **fields) -> dict:
+    # A new project starts from the Settings default operation, saved
+    # explicitly. Projects made earlier have no saved operation and stay on
+    # Transcribe whatever that default later becomes.
+    if fields.get("operation") in (None, ""):
+        fields["operation"] = languages.parse_operation(SETTINGS.get("task"), languages.TRANSCRIBE)
     with _LOCK:
         base = slugify(title)
         slug = base
@@ -250,17 +255,23 @@ def save_project(slug: str, updates: dict) -> dict:
             value = updates[key]
             if key == "data_sensitivity":
                 value = _validate_sensitivity(value)
-            elif key == "operation":
-                if value not in ("transcribe", "translate"):
-                    raise ProjectValidationError(
-                        "Operation must be transcribe or translate."
-                    )
             elif key == "tags":
                 if isinstance(value, str):
                     value = [t.strip() for t in value.split(",")]
                 value = [str(t).strip() for t in (value or []) if str(t).strip()]
             elif key == "vocabulary_profile_id":
                 value = str(value if value is not None else "").strip()
+            elif key == "operation":
+                value = languages.parse_operation(value)
+                if value is None:
+                    continue      # an unrecognised operation is ignored
+            elif key == "transcription_language":
+                # "" clears the project's choice; anything unrecognised is
+                # ignored rather than stored, so a bad value cannot reach the
+                # engine later.
+                value = clean_language(value)
+                if value is None:
+                    continue
             else:
                 value = str(value if value is not None else "").strip()
             record[key] = value
@@ -269,15 +280,122 @@ def save_project(slug: str, updates: dict) -> dict:
         return record
 
 
-def record_box_health_override(
+# ---------------------------------------------------------------------------
+# Per-project backup record (machine-local; never exported or imported)
+# ---------------------------------------------------------------------------
+
+BACKUP_FILE = "backup.local.json"
+BACKUP_RECORD_VERSION = 1
+BACKUP_HISTORY_LIMIT = 50
+_BACKUP_SELECTIONS = {"manual", "picker", "legacy_global"}
+_BACKUP_EVENT_STATUSES = {"complete", "failed", "cancelled"}
+
+
+def is_machine_local(name: str) -> bool:
+    """Files named *.local.json describe this computer and never travel in archives."""
+    return str(name).casefold().endswith(".local.json")
+
+
+def _empty_backup_record() -> dict:
+    return {
+        "version": BACKUP_RECORD_VERSION,
+        "destination": "",
+        "selection": "",
+        "selected_at": "",
+        "attestation": None,
+        "history": [],
+    }
+
+
+def _clean_backup_event(event) -> dict | None:
+    if not isinstance(event, dict) or event.get("status") not in _BACKUP_EVENT_STATUSES:
+        return None
+    cleaned = {
+        "finished_at": str(event.get("finished_at") or ""),
+        "status": event["status"],
+        "filename": str(event.get("filename") or ""),
+        "total_bytes": int(event["total_bytes"]) if isinstance(event.get("total_bytes"), int) else 0,
+        "local_copy_verified": event.get("local_copy_verified") is True,
+        "destination_name": str(event.get("destination_name") or ""),
+    }
+    if event.get("error"):
+        cleaned["error"] = str(event["error"])[:300]
+    return cleaned
+
+
+def _read_backup_file(path: Path) -> dict:
+    raw = read_json(path, None)
+    record = _empty_backup_record()
+    if not isinstance(raw, dict) or raw.get("version") != BACKUP_RECORD_VERSION:
+        return record
+    destination = raw.get("destination")
+    if isinstance(destination, str):
+        record["destination"] = destination
+        record["selection"] = raw.get("selection") if raw.get("selection") in _BACKUP_SELECTIONS else ""
+        record["selected_at"] = str(raw.get("selected_at") or "")
+    attestation = raw.get("attestation")
+    if isinstance(attestation, dict) and record["destination"]:
+        record["attestation"] = {
+            "confirmed_at": str(attestation.get("confirmed_at") or ""),
+            "destination_root": str(attestation.get("destination_root") or ""),
+        }
+    history = raw.get("history")
+    if isinstance(history, list):
+        record["history"] = [
+            event for event in map(_clean_backup_event, history) if event is not None
+        ][-BACKUP_HISTORY_LIMIT:]
+    return record
+
+
+def load_backup_record(slug: str) -> dict:
+    """The project's local backup record, or an empty one if absent or unreadable."""
+    return _read_backup_file(project_dir(slug) / BACKUP_FILE)
+
+
+def _write_backup_record(slug: str, record: dict) -> dict:
+    write_json(project_dir(slug) / BACKUP_FILE, record)
+    return record
+
+
+def set_backup_destination(slug: str, destination: Path, selection: str = "manual") -> dict:
+    """Save this project's backup folder; a changed folder drops any earlier attestation."""
+    if selection not in _BACKUP_SELECTIONS:
+        raise ProjectValidationError("Unknown destination selection source.")
+    destination = Path(destination)
+    if not destination.is_absolute():
+        raise ProjectValidationError("The backup folder must be an absolute path.")
+    with _LOCK:
+        load_project(slug)
+        record = load_backup_record(slug)
+        if record["destination"] != str(destination):
+            record["attestation"] = None
+        record["destination"] = str(destination)
+        record["selection"] = selection
+        record["selected_at"] = _now()
+        return _write_backup_record(slug, record)
+
+
+def clear_backup_destination(slug: str) -> dict:
+    """Forget this project's backup folder and attestation; history is kept."""
+    with _LOCK:
+        load_project(slug)
+        record = load_backup_record(slug)
+        record["destination"] = ""
+        record["selection"] = ""
+        record["selected_at"] = ""
+        record["attestation"] = None
+        return _write_backup_record(slug, record)
+
+
+def record_backup_attestation(
     slug: str, destination_root: Path, *, independently_verified_box_health: bool = False
 ) -> dict:
     """Record only the latest explicit attestation, not a reusable permission."""
     with _LOCK:
-        record = load_project(slug)
+        project = load_project(slug)
         destination_root = Path(destination_root)
         result = future_backup_gate(
-            record["data_sensitivity"], destination_root.name,
+            project["data_sensitivity"], destination_root.name,
             independently_verified_box_health=independently_verified_box_health,
         )
         if not result.override_used or not destination_root.is_absolute():
@@ -285,14 +403,40 @@ def record_box_health_override(
                 "An override requires explicit independent Box Health verification "
                 "for a PHI/unknown project and an absolute destination folder path."
             )
-        record["box_health_override"] = {
+        record = load_backup_record(slug)
+        record["attestation"] = {
             "confirmed_at": _now(),
             "destination_root": str(destination_root),
-            "independently_verified_box_health": True,
         }
-        record["updated"] = _now()
-        write_json(project_dir(slug) / PROJECT_FILE, record)
-        return record
+        if not record["destination"]:
+            record["destination"] = str(destination_root)
+        return _write_backup_record(slug, record)
+
+
+def any_backup_destination() -> bool:
+    """Whether any project on this computer has a backup folder (a yes/no only)."""
+    try:
+        entries = [entry for entry in PATHS.projects.iterdir() if entry.is_dir()]
+    except OSError:
+        return False
+    return any(_read_backup_file(entry / BACKUP_FILE)["destination"] for entry in entries)
+
+
+def append_backup_event(slug: str, event: dict) -> dict | None:
+    """Add one finished backup attempt to this project's local history."""
+    cleaned = _clean_backup_event(event)
+    if cleaned is None:
+        return None
+    with _LOCK:
+        try:
+            load_project(slug)
+            record = load_backup_record(slug)
+            cleaned["finished_at"] = cleaned["finished_at"] or _now()
+            record["history"] = (record["history"] + [cleaned])[-BACKUP_HISTORY_LIMIT:]
+            _write_backup_record(slug, record)
+        except (ProjectError, OSError):
+            return None
+        return cleaned
 
 
 def delete_project(slug: str) -> None:
@@ -388,7 +532,7 @@ def add_document(slug: str, filename: str, data: bytes | None = None, source_pat
             "media_path": str(stored.relative_to(project_dir(slug))).replace("\\", "/"),
             "size_bytes": stored.stat().st_size,
             "status": "uploaded",
-            "status_detail": "Waiting to be transcribed",
+            "status_detail": "Waiting to be processed",
             "created": _now(),
             "updated": _now(),
             "duration": None,
@@ -432,9 +576,10 @@ def update_document(slug: str, doc_id: str, **changes) -> dict:
 
 
 def set_status(slug: str, doc_id: str, status: str, detail: str = "", error: str | None = None) -> dict:
-    return update_document(
-        slug, doc_id, status=status, status_detail=detail, error=error
-    )
+    changes: dict = {"status": status, "status_detail": detail, "error": error}
+    if status not in ("queued", "probing", "decoding", "transcribing"):
+        changes["pending_operation"] = None   # nothing is running for this file
+    return update_document(slug, doc_id, **changes)
 
 
 def list_documents(slug: str) -> list:
@@ -459,9 +604,31 @@ def list_documents(slug: str) -> list:
                 record["media_missing"] = not media_path.is_file()
             except (ProjectError, TypeError, ValueError):
                 record["media_missing"] = True
+        if record["has_transcript"] and "output_status" not in record:
+            # Records written before the operation was tracked: fill in what
+            # the transcript itself shows, once, so the list can label it
+            # truthfully. Purely additive; nothing already stored is changed.
+            doc = read_json(entry / TRANSCRIPT_FILE)
+            if doc is not None:
+                fields = result_fields(transcript_summary(doc))
+                record.update(fields)
+                update_document(slug, entry.name, **fields)
         out.append(record)
     out.sort(key=lambda r: r.get("created") or "")
     return out
+
+
+def result_fields(info: dict) -> dict:
+    """The parts of a transcript's summary kept on its document record."""
+    return {
+        "language": info["language"],
+        "language_name": info["language_name"],
+        "language_requested": info["language_requested"],
+        "output_language": info["output_language"],
+        "operation": info["operation"],
+        "output_status": info["output_status"],
+        "length_unit": "characters" if info["spaceless"] else "words",
+    }
 
 
 def media_file(slug: str, doc_id: str) -> Path:
@@ -520,6 +687,30 @@ def create_snapshot(
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def snapshot_media_state(path: Path) -> str:
+    """Whether an archive carries source media, from its own manifest.
+
+    "included" and "omitted" come from the manifest's includes_media flag and its
+    file list; "none" means the project had no recordings; "unknown" is a
+    version 1 or unreadable archive that cannot say.
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            manifest = json.loads(archive.read(MANIFEST_FILE).decode("utf-8"))
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+        return "unknown"
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("includes_media"), bool):
+        return "unknown"
+    if not manifest["includes_media"]:
+        return "omitted"
+    entries = manifest.get("files") if isinstance(manifest.get("files"), list) else []
+    has_media = any(
+        isinstance(entry, dict) and str(entry.get("path", "")).startswith("media/")
+        for entry in entries
+    )
+    return "included" if has_media else "none"
+
+
 def list_snapshots(slug: str) -> list[dict]:
     snapshot_dir = _snapshot_dir(slug)
     if not snapshot_dir.is_dir():
@@ -536,6 +727,7 @@ def list_snapshots(slug: str) -> list[dict]:
             "snapshot_id": path.name,
             "created": datetime.fromtimestamp(stat.st_mtime, timezone.utc).astimezone().isoformat(timespec="seconds"),
             "size_bytes": stat.st_size,
+            "media": snapshot_media_state(path),
         })
     return sorted(snapshots, key=lambda item: item["created"], reverse=True)
 
@@ -625,16 +817,41 @@ def save_transcript(slug: str, doc_id: str, doc: dict, revision: bool = True, ke
             retimestamped_at=info["retimestamped_at"],
             low_confidence=info["low_confidence"],
             speakers=info["speakers"],
+            **result_fields(info),
         )
         touch_project(slug)
         return doc
+
+
+KEEP_PREFIX = "keep-"
+
+
+def archive_transcript(slug: str, doc_id: str) -> str | None:
+    """Keep the current transcript before a new result replaces it.
+
+    Unlike ordinary autosave revisions these are never pruned: a transcript
+    that took an hour to produce and review must survive being replaced by a
+    translation (or a redo). They appear in Edit history and can be restored.
+    Returns the revision id, or None when there was nothing to keep.
+    """
+    with _LOCK:
+        path = transcript_path(slug, doc_id)
+        previous = read_json(path) if path.exists() else None
+        if previous is None:
+            return None
+        operation = languages.operation_of(previous)
+        revisions = document_dir(slug, doc_id) / "revisions"
+        revisions.mkdir(parents=True, exist_ok=True)
+        revision_id = f"{KEEP_PREFIX}{_stamp()}-{operation}"
+        write_json(revisions / f"{revision_id}.json", previous)
+        return revision_id
 
 
 def prune_revisions(slug: str, doc_id: str, keep: int) -> None:
     revisions = document_dir(slug, doc_id) / "revisions"
     if not revisions.is_dir():
         return
-    files = sorted(revisions.glob("*.json"))
+    files = sorted(f for f in revisions.glob("*.json") if not f.name.startswith(KEEP_PREFIX))
     for stale in files[:-keep] if keep > 0 else files:
         stale.unlink(missing_ok=True)
 
@@ -649,7 +866,14 @@ def list_revisions(slug: str, doc_id: str) -> list:
             size = path.stat().st_size
         except OSError:
             continue
-        out.append({"id": path.stem, "size_bytes": size})
+        out.append({
+            "id": path.stem,
+            "size_bytes": size,
+            # Earlier results kept when a transcript was replaced, named
+            # after the operation that produced them.
+            "kept": path.stem.startswith(KEEP_PREFIX),
+            "operation": path.stem.rsplit("-", 1)[-1] if path.stem.startswith(KEEP_PREFIX) else "",
+        })
     return out
 
 
@@ -684,6 +908,25 @@ def list_outputs(slug: str, doc_id: str) -> list:
 # ---------------------------------------------------------------------------
 # Import / export
 # ---------------------------------------------------------------------------
+
+def zip_info_for(path: Path, archive_name: str, compress_type: int) -> zipfile.ZipInfo:
+    """A ZipInfo whose stored name is exactly archive_name.
+
+    ZipInfo.from_file normalises names with os.sep, leaving backslashes in
+    orig_filename on Windows; the archive then fails its own read-back.
+    """
+    info = zipfile.ZipInfo.from_file(path, archive_name)
+    info.filename = archive_name
+    info.orig_filename = archive_name
+    info.compress_type = compress_type
+    return info
+
+
+def write_zip_file(archive: zipfile.ZipFile, path: Path, archive_name: str) -> None:
+    info = zip_info_for(path, archive_name, archive.compression)
+    with path.open("rb") as source, archive.open(info, "w") as target:
+        shutil.copyfileobj(source, target, 1024 * 1024)
+
 
 def export_project(
     slug: str,
@@ -744,7 +987,7 @@ def export_project(
         archive_name = relative.as_posix()
         if archive_name == MANIFEST_FILE:
             continue
-        if path.name.casefold() == "deidentification.local.json":
+        if is_machine_local(path.name):
             continue
         if any(part.casefold() in transient_directories for part in relative.parts):
             continue
@@ -759,6 +1002,8 @@ def export_project(
         paths.append((path, archive_name))
 
     project_json = dict(record)
+    # A destination attestation is about this computer, not the project.
+    project_json.pop("box_health_override", None)
     project_json["project_id"] = project_id
     project_json["data_sensitivity"] = record.get(
         "data_sensitivity", DEFAULT_SENSITIVITY
@@ -789,15 +1034,13 @@ def export_project(
                                 ),
                             )
                         else:
-                            info = zipfile.ZipInfo.from_file(path, archive_name)
-                            info.compress_type = archive.compression
+                            info = zip_info_for(path, archive_name, archive.compression)
                             with path.open("rb") as source, archive.open(info, "w") as target:
                                 for chunk in iter(lambda: source.read(1024 * 1024), b""):
                                     check_cancelled()
                                     target.write(chunk)
                     else:
-                        info = zipfile.ZipInfo.from_file(path, archive_name)
-                        info.compress_type = archive.compression
+                        info = zip_info_for(path, archive_name, archive.compression)
                         with path.open("rb") as source, archive.open(info, "w") as target:
                             for chunk in iter(lambda: source.read(1024 * 1024), b""):
                                 check_cancelled()
@@ -964,6 +1207,8 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
                     if name == MANIFEST_FILE:
                         continue
                     relative = _safe_archive_path(name)
+                    if is_machine_local(relative.name):
+                        continue
                     destination = stage / relative
                     if info.is_dir():
                         destination.mkdir(parents=True, exist_ok=True)
@@ -990,6 +1235,8 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
                         "be imported."
                     )
                 record["slug"] = slug
+                # Archives from earlier versions carried this machine-specific record.
+                record.pop("box_health_override", None)
                 record["project_id"] = (
                     manifest.get("project_id") or record.get("project_id") or uuid4().hex
                 )
@@ -1034,6 +1281,12 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
                     (stage / directory).mkdir(parents=True, exist_ok=True)
 
                 if target.exists():
+                    # Replacing a project here keeps this computer's backup folder and
+                    # history, but never an attestation, and nothing comes from the archive.
+                    carried = _read_backup_file(target / BACKUP_FILE)
+                    carried["attestation"] = None
+                    if carried["destination"] or carried["history"]:
+                        write_json(stage / BACKUP_FILE, carried)
                     backup = PATHS.projects / f".backup-{uuid4().hex}"
                     target.replace(backup)
                 try:

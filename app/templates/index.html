@@ -23,7 +23,7 @@
   <strong>No transcription model is downloaded yet</strong>
   Local Scribe needs Whisper model weights on disk before it can transcribe
   anything. This is a one-time download and the only outbound request the
-  application makes. <a href="/settings">Open AI Settings to download a model.</a>
+  application makes. <a href="/settings">Open Settings to download a model.</a>
 </div>
 {% endif %}
 
@@ -108,7 +108,8 @@
         {% for snapshot in snapshots %}
         <option value="{{ snapshot.snapshot_id }}" data-slug="{{ snapshot.project_slug }}">
           {{ snapshot.project_slug }} · {{ snapshot.created[:19].replace('T', ' ') }} ·
-          {{ '{:,}'.format(snapshot.size_bytes) }} bytes
+          {{ '{:,}'.format(snapshot.size_bytes) }} bytes ·
+          {{ {'included': 'source media included', 'omitted': 'source media omitted', 'none': 'no recordings', 'unknown': 'media not recorded (older snapshot)'}[snapshot.media] }}
         </option>
         {% endfor %}
       </select>
@@ -133,8 +134,8 @@
   <h3>Recent recovery activity</h3>
   {% if activities %}
   <ul class="small">
-    {% for event in activities|reverse %}
-    <li>{{ event.timestamp[:19].replace('T', ' ') }} · {{ event.action.replace('_', ' ') }} · {{ event.outcome.replace('_', ' ') }}</li>
+    {% for event in activities %}
+    <li>{{ event.day }}, {{ event.time }} · {{ event.summary }} · {{ event.status_label }}</li>
     {% endfor %}
   </ul>
   {% else %}
@@ -148,7 +149,7 @@
     Audio and transcripts never leave this computer. There is no cloud service,
     no account, no telemetry, and no third-party asset loading in this
     interface. Transcription runs locally with OpenAI's Whisper models. Once
-    your model is downloaded you can engage the offline lock in AI Settings,
+    your model is downloaded you can engage the offline lock in Settings,
     which blocks all outbound network access at the process level.
     <a href="/about">Read more about the data-security design.</a>
   </p>
