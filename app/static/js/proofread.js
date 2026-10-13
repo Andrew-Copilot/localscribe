@@ -19,6 +19,8 @@
   const D = window.DOC;
   if (!D || !window.LSEditor) return;
   if (!D.proofreading || !D.proofreading.available) return;
+  // The checks are English-only: for any other transcript language they would
+  // underline almost every word. The page explains this in a notice instead.
   if (D.proofreading.language_supported === false) return;
   if (!D.proofreading.spelling && !D.proofreading.artefacts) return;
 
@@ -159,7 +161,7 @@
     if (jumpBtn) {
       jumpBtn.title = total
         ? `${total} flagged word${total === 1 ? '' : 's'}. Click to step through them.`
-        : 'Nothing flagged in the part of the transcript checked so far.';
+        : `Nothing flagged in the part of the ${D.noun || 'transcript'} checked so far.`;
     }
   }
 
@@ -376,7 +378,7 @@
     jumpBtn.addEventListener('click', () => {
       const all = allIssues();
       if (!all.length) {
-        LS.toast('Nothing flagged in the transcript checked so far.', 'info');
+        LS.toast(`Nothing flagged in the ${D.noun || 'transcript'} checked so far.`, 'info');
         return;
       }
       cursor = (cursor + 1) % all.length;

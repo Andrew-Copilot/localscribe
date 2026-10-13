@@ -29,7 +29,7 @@ import threading
 from pathlib import Path
 
 from .config import PATHS
-
+from .languages import output_language
 DICT_DIR = PATHS.root / "app" / "data" / "dictionary"
 WORDLIST = DICT_DIR / "en_US.txt.gz"
 SUPPLEMENT = DICT_DIR / "transcript-supplement.txt"
@@ -487,6 +487,11 @@ class ResultCache:
 CACHE = ResultCache()
 
 
+def supports_document(doc: dict | None) -> bool:
+    """Language gate for a whole transcript, honouring the translate task."""
+    return supports_language(output_language(doc or {}))
+
+
 def check_segments(
     segments,
     *,
@@ -494,8 +499,16 @@ def check_segments(
     spelling: bool = True,
     artefacts: bool = True,
     suggestions: int = MAX_SUGGESTIONS,
+    language: str | None = None,
 ) -> dict:
-    """Check many segments. `segments` is [{"id": n, "text": "..."}]."""
+    """Check many segments. `segments` is [{"id": n, "text": "..."}].
+
+    ``language`` is the language of the transcript text. When it is given and
+    is not English, nothing is flagged: an empty result is the only honest
+    answer from English-only checks.
+    """
+    if language is not None and not supports_language(language):
+        return {}
     signature = f"{spelling}:{artefacts}:{suggestions}:{hash(frozenset(extra))}"
     out: dict = {}
     for item in segments or []:

@@ -84,9 +84,28 @@
                 data-model="{{ catalog.recommendation.model }}"
                 data-compute="{{ catalog.recommendation.compute_type }}"
                 data-device="{{ catalog.recommendation.device }}">
-          Use the recommendation
+          Use the transcription recommendation
         </button>
         <button type="button" class="btn btn-small btn-quiet" id="recheck-hw">Re-check hardware</button>
+      </div>
+
+      <div class="notice notice-info" style="margin-top:.9rem">
+        <strong>For Translate to English, recommended:
+          {{ catalog.recommendation_translate.model }}</strong>
+        {{ catalog.recommendation_translate.reason }}
+      </div>
+      <ul class="small muted" style="margin:.6rem 0 0; padding-left:1.1rem">
+        {% for alt in catalog.recommendation_translate.alternatives %}
+          <li><strong>{{ alt.model }}</strong> - {{ alt.when }}</li>
+        {% endfor %}
+      </ul>
+      <div class="row" style="margin-top:.7rem">
+        <button type="button" class="btn btn-small" id="apply-rec-translate"
+                data-model="{{ catalog.recommendation_translate.model }}"
+                data-compute="{{ catalog.recommendation_translate.compute_type }}"
+                data-device="{{ catalog.recommendation_translate.device }}">
+          Use the translation recommendation
+        </button>
       </div>
     </div>
   </div>
@@ -132,6 +151,7 @@
           <th>Size</th>
           <th>Speed</th>
           <th>Languages</th>
+          <th>Translate to English</th>
           <th>Suitability</th>
           <th></th>
         </tr>
@@ -143,6 +163,7 @@
             <div class="model-name">
               {{ model.label }}
               {% if model.recommended %}<span class="badge badge-run">recommended</span>{% endif %}
+              {% if model.recommended_translate %}<span class="badge badge-run">recommended for translation</span>{% endif %}
               {% if values.model == model.key %}<span class="badge badge-ok">selected</span>{% endif %}
             </div>
             <div class="model-sub mono">{{ model.key }} &middot; {{ model.params }}</div>
@@ -156,6 +177,12 @@
           </td>
           <td class="small">{{ model.speed }}</td>
           <td class="small">{{ model.languages }}</td>
+          <td class="small" data-translation="{{ model.translation.level }}">
+            {% if model.translation.level == 'ok' %}Supported
+            {% elif model.translation.level == 'limited' %}Poor quality
+            {% else %}Not suitable{% endif %}
+            {% if model.translation.reason %}<div class="muted">{{ model.translation.reason }}</div>{% endif %}
+          </td>
           <td class="model-note">{{ model.suitability }}</td>
           <td class="nowrap" style="text-align:right">
             {% if model.downloaded %}
@@ -280,7 +307,14 @@
         {% elif field.kind == 'select' %}
           <select id="f-{{ field.key }}" name="{{ field.key }}" data-kind="select">
             {% for option in field.options %}
-              <option value="{{ option }}" {% if values[field.key] == option %}selected{% endif %}>{{ option }}</option>
+              <option value="{{ option }}" {% if values[field.key] == option %}selected{% endif %}>{{ (field.option_labels or {}).get(option, option) }}</option>
+            {% endfor %}
+          </select>
+
+        {% elif field.kind == 'language_select' %}
+          <select id="f-{{ field.key }}" name="{{ field.key }}" data-kind="select">
+            {% for choice in field.choices %}
+              <option value="{{ choice.value }}" {% if values[field.key] == choice.value %}selected{% endif %}>{{ choice.label }}</option>
             {% endfor %}
           </select>
 

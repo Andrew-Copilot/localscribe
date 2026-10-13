@@ -35,6 +35,9 @@
   const zoomLabel = document.getElementById('zoom-level');
 
   let transcript = D.transcript;
+  // "transcript" or "translation", from what is stored on this document.
+  const NOUN = D.noun || 'transcript';
+  const NOUN_CAP = NOUN.charAt(0).toUpperCase() + NOUN.slice(1);
   let roster = (D.speakers || []).slice();
   let duration = Number(transcript.duration) || 0;
   let peaks = [];
@@ -67,13 +70,39 @@
       // edit that just changed it.
       return LS.escapeHtml(seg.text || '');
     }
-    return w.map((word, index) =>
-      `<span class="w${(word.prob !== undefined && word.prob < D.lowConfidence) ? ' low' : ''}"` +
+    // Confidence is not shown for machine-translated text (see
+    // confidence_is_meaningful() in app/languages.py); the stored values are kept.
+    const showProb = D.showConfidence !== false;
+    const spans = w.map((word, index) =>
+      `<span class="w${(showProb && word.prob !== undefined && word.prob < D.lowConfidence) ? ' low' : ''}"` +
       ` data-start="${word.start}" data-end="${word.end}" data-wi="${index}"` +
       ` data-prob="${word.prob !== undefined ? word.prob : ''}"` +
-      ` title="${word.prob !== undefined ? Math.round(word.prob * 100) + '% confidence' : ''} - click to hear">` +
+      ` title="${showProb && word.prob !== undefined ? Math.round(word.prob * 100) + '% confidence - ' : ''}click to hear">` +
       `${LS.escapeHtml(word.w)}</span>`
-    ).join(' ');
+    );
+    if (!D.spaceless) return spans.join(' ');
+
+    /* Chinese, Japanese, Thai and similar are written without word spaces and
+       Whisper times them in small units, so a space between every span would
+       put one between every character. The only record of where the original
+       text did have a space (around embedded Latin words, between phrases) is
+       the segment text, so spacing is read from there. Mirrors word_gaps() in
+       app/languages.py. */
+    const tokens = w.map((word) => word.w || '');
+    const text = seg.text || '';
+    let position = 0;
+    return spans.map((html, index) => {
+      const token = tokens[index];
+      const found = token ? text.indexOf(token, position) : -1;
+      let gap;
+      if (found >= 0 && !text.slice(position, found).trim()) {
+        gap = index > 0 && found > position;
+        position = found + token.length;
+      } else {
+        gap = index > 0 && /[A-Za-z0-9]$/.test(tokens[index - 1]) && /^[A-Za-z0-9]/.test(token);
+      }
+      return (gap ? ' ' : '') + html;
+    }).join('');
   }
 
   /* Turns, mirroring app/transcript.py:turns().
@@ -175,9 +204,10 @@
           </div>
         </div>
         <div class="seg-body">
-          <div class="seg-text" contenteditable="true" spellcheck="false"
+          <div class="seg-text" contenteditable="true" spellcheck="false" dir="auto"
+               ${D.language ? `lang="${LS.escapeHtml(D.language)}"` : ''}
                role="textbox" aria-multiline="true"
-               aria-label="Transcript text at ${stamp(seg.start)}">${segmentHtml(seg)}</div>
+               aria-label="${NOUN_CAP} text at ${stamp(seg.start)}">${segmentHtml(seg)}</div>
         </div>
       </div>`;
   }
@@ -427,8 +457,8 @@
           : '') +
       `<div class="word-card-row">${
         others > 0
-          ? `<strong>${others}</strong> other ${others === 1 ? 'occurrence' : 'occurrences'} in this transcript`
-          : 'Appears only here in this transcript'
+          ? `<strong>${others}</strong> other ${others === 1 ? 'occurrence' : 'occurrences'} in this ${NOUN}`
+          : `Appears only here in this ${NOUN}`
       }</div>` +
       `<div class="word-card-hint">Double-click the word to find &amp; replace it everywhere.</div>`;
     document.body.appendChild(wordCard);
@@ -725,7 +755,7 @@
     audio.addEventListener('error', () => {
       LS.toast(
         'The audio could not be loaded. If this is an unusual format, the ' +
-        'browser-playable preview may be missing; re-transcribing the file ' +
+        'browser-playable preview may be missing; processing the file again ' +
         'regenerates it.', 'error', 14000);
     });
 
@@ -991,7 +1021,7 @@
     jumpLow.addEventListener('click', () => {
       const spans = [...document.querySelectorAll('.w.low')];
       if (!spans.length) {
-        LS.toast('No low-confidence words in this transcript.', 'info');
+        LS.toast(`No low-confidence words in this ${NOUN}.`, 'info');
         return;
       }
       lowIndex = (lowIndex + 1) % spans.length;
@@ -1116,7 +1146,7 @@
         // The files themselves are fresh again even though word timings may
         // still be stale (that is a separate, still-true warning above).
         if (outputsStale) outputsStale.hidden = true;
-        LS.toast('Output files rewritten from the current transcript.', 'ok');
+        LS.toast(`Output files rewritten from the current ${NOUN}.`, 'ok');
       } catch (err) {
         LS.toast(err.message, 'error');
       } finally {
@@ -1128,14 +1158,16 @@
   document.querySelectorAll('[data-restore]').forEach((button) => {
     button.addEventListener('click', async () => {
       if (!confirm(
-        'Restore this earlier version?\n\nThe current transcript is saved as a ' +
-        'new revision first, so this can be undone.'
+        'Restore this earlier version?\n\nThe current ' + NOUN + ' is kept in the edit ' +
+        'history first, so this can be undone. If the earlier version is a ' +
+        'different kind of result (for example the original-language transcript ' +
+        'instead of an English translation), the page reloads to show it correctly.'
       )) return;
       try {
-        const result = await LS.post(`${api}/revisions/${button.dataset.restore}/restore`);
-        transcript = result.transcript;
-        render();
-        LS.toast('Earlier version restored.', 'ok');
+        await LS.post(`${api}/revisions/${button.dataset.restore}/restore`);
+        // The restored version may be the other kind of result, which changes
+        // headings, labels, notices and file names, so show the page afresh.
+        location.reload();
       } catch (err) {
         LS.toast(err.message, 'error');
       }

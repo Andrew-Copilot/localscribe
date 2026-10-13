@@ -34,7 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .config import PATHS, app_version
+from .config import PATHS, SETTINGS, app_version
+from . import languages
 from .sensitivity import DEFAULT_SENSITIVITY, future_backup_gate, normalize_sensitivity, validate_sensitivity
 from .transcript import summary as transcript_summary
 
@@ -56,6 +57,8 @@ EDITABLE_FIELDS = (
     "vocabulary_profile_id",
     "tags",
     "data_sensitivity",
+    "transcription_language",
+    "operation",
 )
 
 _LOCK = threading.RLock()
@@ -167,6 +170,18 @@ def write_json(path: Path, payload) -> Path:
 # Projects
 # ---------------------------------------------------------------------------
 
+def project_operation(project: dict) -> str:
+    """The operation a project is currently set to. Projects with none saved
+    (made before the choice existed) are Transcribe."""
+    return languages.parse_operation(project.get("operation"), languages.TRANSCRIBE) or languages.TRANSCRIBE
+
+
+def clean_language(value) -> str | None:
+    """A project's language choice: \"\" (none), \"auto\", a code, or None if invalid."""
+    text = str(value if value is not None else "").strip()
+    return languages.parse(text) if text else ""
+
+
 def new_project_record(title: str, **fields) -> dict:
     record = {
         "project_id": uuid4().hex,
@@ -179,6 +194,8 @@ def new_project_record(title: str, **fields) -> dict:
         "consent_notes": "",
         "glossary": "",
         "vocabulary_profile_id": "",
+        "transcription_language": "",   # "" = use the AI Settings default
+        "operation": "",                 # "" = transcribe (projects made before this existed)
         "tags": [],
         "data_sensitivity": DEFAULT_SENSITIVITY,
         "created": _now(),
@@ -191,10 +208,17 @@ def new_project_record(title: str, **fields) -> dict:
             continue
         if key in fields and fields[key] is not None:
             record[key] = fields[key]
+    record["transcription_language"] = clean_language(record["transcription_language"]) or ""
+    record["operation"] = languages.parse_operation(record["operation"]) or ""
     return record
 
 
 def create_project(title: str, **fields) -> dict:
+    # A new project starts from the AI Settings default operation, saved
+    # explicitly. Projects made earlier have no saved operation and stay on
+    # Transcribe whatever that default later becomes.
+    if fields.get("operation") in (None, ""):
+        fields["operation"] = languages.parse_operation(SETTINGS.get("task"), languages.TRANSCRIBE)
     with _LOCK:
         base = slugify(title)
         slug = base
@@ -237,6 +261,17 @@ def save_project(slug: str, updates: dict) -> dict:
                 value = [str(t).strip() for t in (value or []) if str(t).strip()]
             elif key == "vocabulary_profile_id":
                 value = str(value if value is not None else "").strip()
+            elif key == "operation":
+                value = languages.parse_operation(value)
+                if value is None:
+                    continue      # an unrecognised operation is ignored
+            elif key == "transcription_language":
+                # "" clears the project's choice; anything unrecognised is
+                # ignored rather than stored, so a bad value cannot reach the
+                # engine later.
+                value = clean_language(value)
+                if value is None:
+                    continue
             else:
                 value = str(value if value is not None else "").strip()
             record[key] = value
@@ -364,7 +399,7 @@ def add_document(slug: str, filename: str, data: bytes | None = None, source_pat
             "media_path": str(stored.relative_to(project_dir(slug))).replace("\\", "/"),
             "size_bytes": stored.stat().st_size,
             "status": "uploaded",
-            "status_detail": "Waiting to be transcribed",
+            "status_detail": "Waiting to be processed",
             "created": _now(),
             "updated": _now(),
             "duration": None,
@@ -408,9 +443,10 @@ def update_document(slug: str, doc_id: str, **changes) -> dict:
 
 
 def set_status(slug: str, doc_id: str, status: str, detail: str = "", error: str | None = None) -> dict:
-    return update_document(
-        slug, doc_id, status=status, status_detail=detail, error=error
-    )
+    changes: dict = {"status": status, "status_detail": detail, "error": error}
+    if status not in ("queued", "probing", "decoding", "transcribing"):
+        changes["pending_operation"] = None   # nothing is running for this file
+    return update_document(slug, doc_id, **changes)
 
 
 def list_documents(slug: str) -> list:
@@ -435,9 +471,31 @@ def list_documents(slug: str) -> list:
                 record["media_missing"] = not media_path.is_file()
             except (ProjectError, TypeError, ValueError):
                 record["media_missing"] = True
+        if record["has_transcript"] and "output_status" not in record:
+            # Records written before the operation was tracked: fill in what
+            # the transcript itself shows, once, so the list can label it
+            # truthfully. Purely additive; nothing already stored is changed.
+            doc = read_json(entry / TRANSCRIPT_FILE)
+            if doc is not None:
+                fields = result_fields(transcript_summary(doc))
+                record.update(fields)
+                update_document(slug, entry.name, **fields)
         out.append(record)
     out.sort(key=lambda r: r.get("created") or "")
     return out
+
+
+def result_fields(info: dict) -> dict:
+    """The parts of a transcript's summary kept on its document record."""
+    return {
+        "language": info["language"],
+        "language_name": info["language_name"],
+        "language_requested": info["language_requested"],
+        "output_language": info["output_language"],
+        "operation": info["operation"],
+        "output_status": info["output_status"],
+        "length_unit": "characters" if info["spaceless"] else "words",
+    }
 
 
 def media_file(slug: str, doc_id: str) -> Path:
@@ -601,16 +659,41 @@ def save_transcript(slug: str, doc_id: str, doc: dict, revision: bool = True, ke
             retimestamped_at=info["retimestamped_at"],
             low_confidence=info["low_confidence"],
             speakers=info["speakers"],
+            **result_fields(info),
         )
         touch_project(slug)
         return doc
+
+
+KEEP_PREFIX = "keep-"
+
+
+def archive_transcript(slug: str, doc_id: str) -> str | None:
+    """Keep the current transcript before a new result replaces it.
+
+    Unlike ordinary autosave revisions these are never pruned: a transcript
+    that took an hour to produce and review must survive being replaced by a
+    translation (or a redo). They appear in Edit history and can be restored.
+    Returns the revision id, or None when there was nothing to keep.
+    """
+    with _LOCK:
+        path = transcript_path(slug, doc_id)
+        previous = read_json(path) if path.exists() else None
+        if previous is None:
+            return None
+        operation = languages.operation_of(previous)
+        revisions = document_dir(slug, doc_id) / "revisions"
+        revisions.mkdir(parents=True, exist_ok=True)
+        revision_id = f"{KEEP_PREFIX}{_stamp()}-{operation}"
+        write_json(revisions / f"{revision_id}.json", previous)
+        return revision_id
 
 
 def prune_revisions(slug: str, doc_id: str, keep: int) -> None:
     revisions = document_dir(slug, doc_id) / "revisions"
     if not revisions.is_dir():
         return
-    files = sorted(revisions.glob("*.json"))
+    files = sorted(f for f in revisions.glob("*.json") if not f.name.startswith(KEEP_PREFIX))
     for stale in files[:-keep] if keep > 0 else files:
         stale.unlink(missing_ok=True)
 
@@ -625,7 +708,14 @@ def list_revisions(slug: str, doc_id: str) -> list:
             size = path.stat().st_size
         except OSError:
             continue
-        out.append({"id": path.stem, "size_bytes": size})
+        out.append({
+            "id": path.stem,
+            "size_bytes": size,
+            # Earlier results kept when a transcript was replaced, named
+            # after the operation that produced them.
+            "kept": path.stem.startswith(KEEP_PREFIX),
+            "operation": path.stem.rsplit("-", 1)[-1] if path.stem.startswith(KEEP_PREFIX) else "",
+        })
     return out
 
 

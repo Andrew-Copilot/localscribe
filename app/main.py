@@ -36,6 +36,7 @@ from . import (
     exporters,
     health,
     handoff,
+    languages,
     media,
     proofread,
     projects,
@@ -257,8 +258,49 @@ async def page_project(request: Request, slug: str):
                 for item in profiles
             ),
             accepted=sorted(media.MEDIA_EXTENSIONS),
+            language_choices=languages.choices(),
+            default_language=languages.coerce(
+                project.get("transcription_language") or SETTINGS.get("language")
+            ),
+            operation=projects.project_operation(project),
+            terms=languages.terms(projects.project_operation(project)),
+            operation_info=operation_info(),
         ),
     )
+
+
+def operation_info() -> dict:
+    """What the project page needs to explain each operation immediately.
+
+    Computed once on the server (so the rules live in one place) and handed to
+    the page, which switches between the two entries without a round trip.
+    """
+    status = ENGINE.status()
+    hardware = ENGINE.hardware()
+    key = status["selected_model"]
+    spec = catalog.model_spec(key)
+    compat = {}
+    for operation in languages.OPERATIONS:
+        problem = catalog.operation_problem(key, operation, hardware)
+        support = (
+            catalog.translation_support(spec)
+            if operation == languages.TRANSLATE else {"level": catalog.OK, "reason": ""}
+        )
+        compat[operation] = {
+            "ok": problem is None,
+            "level": support["level"],
+            "message": problem or support["reason"],
+        }
+    return {
+        "model": {
+            "key": key,
+            "label": status["selected_model_label"],
+            "downloaded": bool(status["model_downloaded"]),
+        },
+        "compat": compat,
+        "suggestion": catalog.suggest_translation_model(hardware),
+        "terms": languages.TERMS,
+    }
 
 
 @app.get("/project/{slug}/document/{doc_id}", response_class=HTMLResponse)
@@ -280,6 +322,11 @@ async def page_document(request: Request, slug: str, doc_id: str):
             transcript=doc,
             has_transcript=doc is not None,
             info=summary(doc) if doc else None,
+            doc_terms=languages.terms(
+                languages.operation_of(doc) if doc else (
+                    record.get("pending_operation") or projects.project_operation(project)
+                )
+            ),
             outputs=projects.list_outputs(slug, doc_id),
             revisions=projects.list_revisions(slug, doc_id),
             speakers=speaker_roster(doc) if doc else [],
@@ -290,10 +337,13 @@ async def page_document(request: Request, slug: str, doc_id: str):
                 "spelling": bool(SETTINGS.get("proofread_spelling", True)),
                 "artefacts": bool(SETTINGS.get("proofread_artefacts", True)),
                 "available": proofread.DICTIONARY.available,
-                "language_supported": proofread.supports_language(
-                    (doc or {}).get("language")
-                ),
+                # The checks are English-only; the editor switches them off
+                # and says why for any other transcript language.
+                "language_supported": proofread.supports_document(doc),
+                "language": languages.output_language(doc or {}),
+                "language_name": languages.name(languages.output_language(doc or {})),
             },
+            spaceless=languages.doc_is_spaceless(doc or {}),
         ),
     )
 
@@ -929,7 +979,7 @@ async def api_upload(slug: str, files: list[UploadFile]):
                 slug, record["id"],
                 duration=round(info.duration or 0.0, 3) or None,
                 media=info.to_dict(),
-                status_detail=f"{media.describe(info)} - ready to transcribe",
+                status_detail=media.describe(info),
             )
             CONSOLE.success(
                 f"Added {name} ({fmt_bytes(record.get('size_bytes'))}) - "
@@ -985,16 +1035,47 @@ async def api_transcribe(slug: str, request: Request):
         payload = {}
     wanted = payload.get("documents") if isinstance(payload, dict) else None
     force = bool(payload.get("force")) if isinstance(payload, dict) else False
+    # Replacing an existing result is an explicit, separate consent.
+    replace = bool(payload.get("replace")) if isinstance(payload, dict) else False
+
+    # What to do: an explicit choice for this run, otherwise the project's.
+    explicit_operation = None
+    if isinstance(payload, dict) and payload.get("operation") not in (None, ""):
+        explicit_operation = languages.parse_operation(payload.get("operation"))
+        if explicit_operation is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{payload.get('operation')}' is not a supported operation. "
+                       "Use 'transcribe' or 'translate'.",
+            )
+
+    # The spoken language: an explicit choice for this run, then the
+    # project's saved choice, then the AI Settings default. "auto" means
+    # detect it from the audio.
+    explicit = None
+    if isinstance(payload, dict) and payload.get("language") not in (None, ""):
+        explicit = languages.parse(payload.get("language"))
+        if explicit is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{payload.get('language')}' is not a supported language.",
+            )
 
     try:
-        projects.load_project(slug)
+        project = projects.load_project(slug)
         documents = projects.list_documents(slug)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    language = explicit or languages.coerce(
+        project.get("transcription_language") or SETTINGS.get("language")
+    )
+    operation = explicit_operation or projects.project_operation(project)
+    terms = languages.terms(operation)
+
     status = ENGINE.status()
+    spec = catalog.model_spec(status["selected_model"])
     if not status["model_downloaded"]:
-        spec = catalog.model_spec(status["selected_model"])
         raise HTTPException(
             status_code=409,
             detail=(
@@ -1002,6 +1083,22 @@ async def api_transcribe(slug: str, request: Request):
                 "been downloaded yet. Open AI Settings and download it first."
             ),
         )
+
+    # Enforced here, not just in the page: an unsuitable model never enters
+    # the queue, whichever client sent the request.
+    problem = catalog.operation_problem(
+        status["selected_model"], operation, ENGINE.hardware()
+    )
+    if problem:
+        raise HTTPException(status_code=409, detail=problem)
+
+    problem = languages.unsupported_reason(
+        language,
+        model_key=status["selected_model"],
+        english_only=bool(spec and spec.languages == "English only"),
+    )
+    if problem:
+        raise HTTPException(status_code=409, detail=problem)
 
     queued, skipped = [], []
     for record in documents:
@@ -1014,25 +1111,50 @@ async def api_transcribe(slug: str, request: Request):
         if record["status"] in ("queued", "probing", "decoding", "transcribing"):
             skipped.append({"id": doc_id, "reason": "Already in progress"})
             continue
-        if record["status"] == "transcribed" and not force and not wanted:
-            skipped.append({"id": doc_id, "reason": "Already transcribed"})
+
+        existing = languages.terms(record.get("operation"))
+        has_result = bool(record.get("has_transcript")) or record["status"] == "transcribed"
+        if has_result and not force and not wanted:
+            skipped.append({"id": doc_id, "reason": f"Already {existing['done'].lower()}"})
+            continue
+        if has_result and not replace:
+            # Never overwrite a finished result without being told to. The
+            # earlier version is kept in Edit history either way.
+            skipped.append({
+                "id": doc_id,
+                "needs_confirmation": True,
+                "reason": (
+                    f"This recording already has a {existing['result']}. Confirm to "
+                    f"replace it with a new {terms['result']}; the earlier one is "
+                    "kept in Edit history."
+                ),
+            })
             continue
 
-        job = QUEUE.submit_transcription(slug, doc_id, record["filename"])
+        job = QUEUE.submit_transcription(
+            slug, doc_id, record["filename"], language=language, operation=operation,
+        )
         projects.set_status(slug, doc_id, "queued", "Waiting in the queue")
+        projects.update_document(slug, doc_id, pending_operation=operation)
         queued.append({"id": doc_id, "job": job.id, "filename": record["filename"]})
 
     if not queued:
-        CONSOLE.info("Nothing to transcribe: every file is done or in progress.")
+        CONSOLE.info(
+            f"Nothing to {terms['action'].lower()}: every file is done, in progress, "
+            "or waiting for confirmation to be replaced."
+        )
     else:
         CONSOLE.step(
-            f"Queued {len(queued)} file(s) for transcription",
+            terms["queued"].format(n=f"{len(queued)} file(s)"),
             files=[q["filename"] for q in queued],
+            language=language,
+            operation=operation,
         )
 
     return {
         "queued": queued,
         "skipped": skipped,
+        "operation": operation,
         "documents": projects.list_documents(slug),
         "queue": QUEUE.snapshot(limit=10),
     }
@@ -1279,7 +1401,9 @@ def _export_outputs(slug: str, doc_id: str, doc: dict, record: dict, project: di
             doc, generated, successful,
         )
         try:
-            exporters.write_json(doc, out_dir / "transcript.json", settings, meta)
+            exporters.write_json(
+                doc, out_dir / f"{exporters.basename_for(doc)}.json", settings, meta
+            )
         except Exception as exc:
             written["json"] = f"error: {exc}"
     return written
@@ -1646,11 +1770,14 @@ async def api_proofread(slug: str, doc_id: str, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     doc = projects.load_transcript(slug, doc_id) or {}
-    if not proofread.supports_language(doc.get("language")):
+    if not proofread.supports_document(doc):
+        code = languages.output_language(doc)
         return {
             "issues": {},
             "enabled": False,
-            "reason": "Proofreading is currently supported for English transcripts only.",
+            "reason": "language",
+            "language": code,
+            "language_name": languages.name(code),
         }
     profile = vocabulary.get_profile(project.get("vocabulary_profile_id"))
     extra = proofread.extra_words(
@@ -1809,7 +1936,23 @@ async def api_restore_revision(slug: str, doc_id: str, revision_id: str):
     previous["export"] = current.get("export")
     normalise(previous)
     validation.record_restore(previous, revision_id)
+    # Keep what is being replaced, so restoring an earlier result (say the
+    # original-language transcript after a translation) can be undone too.
+    projects.archive_transcript(slug, doc_id)
     projects.save_transcript(slug, doc_id, previous, keep=int(SETTINGS.get("autosave_revisions") or 20))
+    record = projects.load_document(slug, doc_id)
+    project = projects.load_project(slug)
+    exporters.export_all(
+        previous, projects.outputs_dir(slug, doc_id), SETTINGS.all(),
+        {
+            "title": Path(record.get("filename") or "transcript").stem,
+            "filename": record.get("filename"),
+            "project": project.get("title"),
+            "principal_investigator": project.get("principal_investigator"),
+            "irb_protocol": project.get("irb_protocol"),
+            "generated": projects._now(),
+        },
+    )
     CONSOLE.warn(f"Restored transcript revision {revision_id}", document=doc_id)
     return {"transcript": previous, "summary": summary(previous)}
 

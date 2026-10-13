@@ -17,7 +17,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from . import catalog
+from . import catalog, languages
 from .config import SETTINGS, parse_temperature_ladder
 from .console import CONSOLE, fmt_duration
 
@@ -486,7 +486,7 @@ class WhisperEngine:
     def transcribe_params(self, overrides: dict | None = None) -> dict:
         """Translate settings into faster-whisper transcribe() keywords."""
         s = SETTINGS.all()
-        language = str(s.get("language") or "auto").strip()
+        language = languages.coerce(s.get("language"))
 
         params = {
             "task": s.get("task") or "transcribe",
@@ -510,7 +510,7 @@ class WhisperEngine:
             "vad_filter": bool(s.get("vad_filter")),
         }
 
-        if language and language.lower() != "auto":
+        if language != languages.AUTO:
             params["language"] = language
 
         max_new = int(s.get("max_new_tokens") or 0)
@@ -544,6 +544,19 @@ class WhisperEngine:
 
         if overrides:
             params.update(overrides)
+
+        # "auto" is not a Whisper language: it means leave `language` out so
+        # the decoder detects it. A per-run override of "auto" must also be
+        # able to cancel a language set by the saved settings or the advanced
+        # panel. Any other value is normalised to a bare code; an unrecognised
+        # one passes through untouched, since the advanced panel is a raw
+        # passthrough by design.
+        if "language" in params:
+            parsed = languages.parse(params["language"])
+            if parsed == languages.AUTO:
+                params.pop("language")
+            elif parsed:
+                params["language"] = parsed
 
         return params
 
@@ -637,7 +650,10 @@ class WhisperEngine:
             for k, v in params.items()
             if k not in ("vad_parameters",)
         }
-        CONSOLE.step("Starting transcription", **{
+        CONSOLE.step(
+            "Starting translation to English" if loggable.get("task") == "translate"
+            else "Starting transcription",
+            **{
             "beam_size": loggable.get("beam_size"),
             "language": loggable.get("language", "auto-detect"),
             "task": loggable.get("task"),
@@ -661,12 +677,18 @@ class WhisperEngine:
         probability = float(getattr(info, "language_probability", 0.0) or 0.0)
         if "language" not in params:
             CONSOLE.info(
-                f"Detected language: {detected or 'unknown'} "
+                f"Detected language: {languages.label(detected) or 'unknown'} "
                 f"({probability * 100:.1f}% confidence)",
                 language=detected, probability=round(probability, 4),
             )
         else:
-            CONSOLE.info(f"Language forced to '{params['language']}'")
+            # A forced language is the language of the transcript even if a
+            # back end reports nothing back about it.
+            detected = detected or str(params["language"])
+            CONSOLE.info(
+                f"Language set to {languages.label(params['language'])}",
+                language=params["language"],
+            )
 
         vad_duration = float(getattr(info, "duration_after_vad", 0.0) or 0.0)
         if params.get("vad_filter") and vad_duration and duration:
@@ -716,6 +738,7 @@ class WhisperEngine:
             "info": info,
             "language": detected,
             "language_probability": probability,
+            "language_requested": params.get("language") or languages.AUTO,
             "stats": stats,
             "params": loggable,
         }
