@@ -934,6 +934,28 @@ async def api_uncertain_terms_report(slug: str):
     )
 
 
+def _create_snapshot_or_fail(slug: str, project: dict, **options) -> dict:
+    """Create a recovery snapshot; on failure say so and leave the project untouched."""
+    try:
+        return projects.create_snapshot(slug, **options)
+    except projects.ProjectError:
+        raise
+    except Exception as exc:
+        activity.record(
+            "snapshot_create", project.get("project_id") or project["slug"], "failed",
+        )
+        CONSOLE.error(
+            f"Could not create a recovery snapshot ({type(exc).__name__}); "
+            "nothing was changed.", slug=slug,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="The recovery snapshot could not be created, so nothing was "
+                   "changed. Check free disk space and try again, or continue "
+                   "without a snapshot.",
+        ) from exc
+
+
 @app.delete("/api/projects/{slug}")
 async def api_delete_project(slug: str, snapshot: bool | None = None):
     if snapshot is None:
@@ -944,7 +966,7 @@ async def api_delete_project(slug: str, snapshot: bool | None = None):
     try:
         record = projects.load_project(slug)
         if snapshot:
-            projects.create_snapshot(slug)
+            _create_snapshot_or_fail(slug, record)
         projects.delete_project(slug)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1028,7 +1050,7 @@ async def api_delete_document(slug: str, doc_id: str, snapshot: bool | None = No
         project = projects.load_project(slug)
         record = projects.load_document(slug, doc_id)
         if snapshot:
-            projects.create_snapshot(slug)
+            _create_snapshot_or_fail(slug, project)
         projects.delete_document(slug, doc_id)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1265,7 +1287,7 @@ async def api_create_snapshot(slug: str, request: Request):
         raise HTTPException(status_code=400, detail="'include_media' must be a boolean.")
     try:
         project = projects.load_project(slug)
-        snapshot = projects.create_snapshot(slug, include_media=include_media)
+        snapshot = _create_snapshot_or_fail(slug, project, include_media=include_media)
     except projects.ProjectError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     activity.record("snapshot_create", project.get("project_id") or project["slug"])

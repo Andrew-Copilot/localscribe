@@ -255,6 +255,56 @@ def test_archive_entries_use_forward_slashes():
                   and bundle.testzip() is None)
 
 
+def test_failed_snapshot_blocks_deletion():
+    with project_root():
+        with patch("app.update_check.refresh_state_async"), patch.object(
+            config, "install_offline_guard"
+        ):
+            from app import main as web
+        project = projects.create_project("Synthetic failing snapshot")
+        slug = project["slug"]
+        document = projects.add_document(slug, "synthetic.wav", data=b"synthetic")
+
+        async def exercise():
+            from fastapi import HTTPException
+
+            with patch.object(projects, "create_snapshot", side_effect=zipfile.BadZipFile("x")):
+                for label, call in (
+                    ("document", lambda: web.api_delete_document(slug, document["id"], snapshot=True)),
+                    ("project", lambda: web.api_delete_project(slug, snapshot=True)),
+                ):
+                    try:
+                        await call()
+                    except HTTPException as exc:
+                        check(f"{label} deletion reports a failed snapshot clearly",
+                              exc.status_code == 500 and "snapshot" in exc.detail)
+                    else:
+                        check(f"{label} deletion reports a failed snapshot clearly", False)
+            check("a failed snapshot deletes nothing",
+                  projects.load_document(slug, document["id"])["id"] == document["id"])
+            events = activity.recent(project_id=project["project_id"])
+            check("the failed snapshot is recorded without content",
+                  [e["outcome"] for e in events] == ["failed", "failed"]
+                  and all(e["action"] == "snapshot_create" for e in events))
+
+        asyncio.run(exercise())
+
+
+def test_removal_dialog_has_explicit_outcomes():
+    script = (Path(config.__file__).parent / "static" / "js" / "project.js").read_text(
+        encoding="utf-8"
+    )
+    check("removal uses a dialog with three explicit outcomes",
+          "function confirmRemoval" in script
+          and "'Keep it'" in script
+          and "'Remove without a snapshot'" in script
+          and "'Create snapshot, then remove'" in script)
+    check("cancelling the dialog never deletes", "if (!choice) return;" in script)
+    check("the old two-step confirm() chain is gone",
+          "Create a local recovery snapshot of the whole project first" not in script
+          and "Choose Cancel to continue without" not in script)
+
+
 def main() -> int:
     for test in (
         test_snapshot_and_restore_choices,
@@ -263,6 +313,8 @@ def main() -> int:
         test_deleted_project_can_be_restored,
         test_overwrite_import_requires_snapshot_choice,
         test_archive_entries_use_forward_slashes,
+        test_failed_snapshot_blocks_deletion,
+        test_removal_dialog_has_explicit_outcomes,
     ):
         print(f"\n{test.__name__}")
         test()

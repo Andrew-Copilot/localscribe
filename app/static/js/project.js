@@ -10,6 +10,53 @@
   const slug = window.PROJECT.slug;
   const info = window.PROJECT.info || { terms: {}, compat: {}, model: {}, suggestion: null };
   const TERMS = info.terms || {};
+
+  /* Removal dialog with three explicit outcomes, so Cancel never silently
+     means "delete without a safety copy". Resolves 'snapshot', 'plain' or null. */
+  function confirmRemoval({ title, message }) {
+    return new Promise((resolve) => {
+      const dialog = document.createElement('dialog');
+      dialog.className = 'confirm-dialog';
+      dialog.setAttribute('aria-labelledby', 'confirm-dialog-title');
+      dialog.setAttribute('aria-describedby', 'confirm-dialog-body');
+      const form = document.createElement('form');
+      form.method = 'dialog';
+      const heading = document.createElement('h2');
+      heading.id = 'confirm-dialog-title';
+      heading.textContent = title;
+      const body = document.createElement('p');
+      body.id = 'confirm-dialog-body';
+      body.textContent = message;
+      const hint = document.createElement('p');
+      hint.className = 'small muted';
+      hint.textContent =
+        'A recovery snapshot is a local copy of the whole project that you can restore from later.';
+      const actions = document.createElement('div');
+      actions.className = 'confirm-dialog-actions';
+      [
+        ['Keep it', '', 'btn'],
+        ['Remove without a snapshot', 'plain', 'btn btn-danger'],
+        ['Create snapshot, then remove', 'snapshot', 'btn btn-primary'],
+      ].forEach(([label, value, cls]) => {
+        const button = document.createElement('button');
+        button.type = 'submit';
+        button.value = value;
+        button.className = cls;
+        button.textContent = label;
+        if (value === 'snapshot') button.autofocus = true;
+        actions.appendChild(button);
+      });
+      form.append(heading, body, hint, actions);
+      dialog.appendChild(form);
+      dialog.addEventListener('close', () => {
+        const choice = dialog.returnValue || null;
+        dialog.remove();
+        resolve(choice);
+      });
+      document.body.appendChild(dialog);
+      dialog.showModal();
+    });
+  }
   let operation = window.PROJECT.operation === 'translate' ? 'translate' : 'transcribe';
   let documents = window.PROJECT.documents || [];
 
@@ -296,14 +343,13 @@
       if (button.dataset.act === 'del') {
         const doc = documents.find((d) => d.id === id);
         const name = doc ? doc.filename : 'this file';
-        if (!confirm(
-          `Remove "${name}"?\n\nThis permanently deletes the media file, its ` +
-          `transcript or translation, and every exported output for it. This cannot be undone.`
-        )) return;
-        const snapshot = confirm(
-          'Create a local recovery snapshot of the whole project first?\n\n' +
-          'Choose Cancel to continue without a snapshot.'
-        );
+        const choice = await confirmRemoval({
+          title: `Remove "${name}"?`,
+          message: 'This permanently deletes the media file, its transcript or ' +
+            'translation, and every exported output for it. This cannot be undone.',
+        });
+        if (!choice) return;
+        const snapshot = choice === 'snapshot';
         button.disabled = true;
         try {
           await LS.del(
@@ -896,15 +942,14 @@
   if (deleteBtn) {
     deleteBtn.addEventListener('click', async () => {
       const count = documents.length;
-      if (!confirm(
-        `Delete this entire project?\n\nThis permanently removes ` +
-  `${LS.plural(count, 'recording')}, all transcripts and translations, and all exported ` +
-  `files. Existing recovery snapshots are kept. This cannot be undone.`
-      )) return;
-      const snapshot = confirm(
-        'Create a local recovery snapshot of the whole project first?\n\n' +
-        'Choose Cancel to continue without a new snapshot.'
-      );
+      const choice = await confirmRemoval({
+        title: 'Delete this entire project?',
+        message: `This permanently removes ${LS.plural(count, 'recording')}, all ` +
+          'transcripts and translations, and all exported files. Existing recovery ' +
+          'snapshots are kept. This cannot be undone.',
+      });
+      if (!choice) return;
+      const snapshot = choice === 'snapshot';
 
       try {
         await LS.del(
