@@ -639,7 +639,7 @@
 
   document.addEventListener('keydown', (event) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.target.closest('input, textarea, select, button, [contenteditable="true"]')) return;
+    if (event.target.closest('input, textarea, select, button, summary, [contenteditable="true"]')) return;
     if (!/^[1-9]$/.test(event.key)) return;
 
     const speaker = roster[Number(event.key) - 1];
@@ -967,8 +967,10 @@
   function updateFindbarOffset() {
     if (!playerCard || !findbarEl) return;
     const topbar = document.querySelector('.topbar');
-    const topbarHeight = topbar ? topbar.offsetHeight : 58;
-    findbarEl.style.setProperty('--findbar-top', `${topbarHeight + playerCard.offsetHeight + 8}px`);
+    const stuck = (el) => Boolean(el) && getComputedStyle(el).position === 'sticky';
+    const offset = (stuck(topbar) ? topbar.offsetHeight : 0)
+      + (stuck(playerCard) ? playerCard.offsetHeight : 0) + 8;
+    document.documentElement.style.setProperty('--findbar-top', `${offset}px`);
   }
   if (playerCard && findbarEl) {
     updateFindbarOffset();
@@ -979,7 +981,7 @@
 
   document.addEventListener('keydown', (event) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.target.closest('input, textarea, select, button, [contenteditable="true"]')) return;
+    if (event.target.closest('input, textarea, select, button, summary, [contenteditable="true"]')) return;
     if (!audio) return;
 
     if (event.code === 'Space') {

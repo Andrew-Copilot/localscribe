@@ -18,7 +18,7 @@
   {{ document.filename }}
 </div>
 
-<div class="page-head">
+<div class="page-head page-head-compact">
   <div class="grow">
     <h1>{{ document.filename }}</h1>
     <p class="small muted" id="doc-summary">
@@ -32,15 +32,24 @@
         &middot; {{ info.model }}
       {% endif %}
     </p>
+    {% if has_transcript %}
+    <nav class="tool-links" aria-label="Jump to a tools panel">
+      <span class="small muted">Tools:</span>
+      <a href="#tool-review" data-open-tool>Review</a>
+      <a href="#tool-speakers" data-open-tool>Speakers</a>
+      <a href="#tool-deid" data-open-tool>De-identification</a>
+      <a href="#tool-notes" data-open-tool>Comments</a>
+      <a href="#tool-help" data-open-tool>Help</a>
+    </nav>
+    {% endif %}
   </div>
+  <ol class="workflow-stages" aria-label="Transcript workflow">
+    {% for stage in workflow.stages %}
+    <li class="{{ 'active' if stage.active else '' }}"
+        {% if stage.active %}aria-current="step"{% endif %}>{{ stage.label }}</li>
+    {% endfor %}
+  </ol>
 </div>
-
-<ol class="workflow-stages" aria-label="Transcript workflow">
-  {% for stage in workflow.stages %}
-  <li class="{{ 'active' if stage.active else '' }}"
-      {% if stage.active %}aria-current="step"{% endif %}>{{ stage.label }}</li>
-  {% endfor %}
-</ol>
 
 {% if not has_transcript %}
   <div class="empty">
@@ -146,44 +155,6 @@
                 aria-valuemax="{{ document.duration or 0 }}" aria-valuenow="0"
                 aria-valuetext="00:00"></canvas>
       </div>
-      <p class="ribbon-hint">
-        Click or focus the waveform and use the arrow keys to seek. Click a
-        word to replay it with the selected pre/post-roll. Hold the pointer
-        over a word to see how many other times it appears. Double-click a
-        word to find and replace it everywhere.
-        <kbd>Space</kbd> play/pause &middot;
-        <kbd>&larr;</kbd><kbd>&rarr;</kbd> 2s &middot;
-        <kbd>Shift</kbd>+<kbd>&larr;</kbd><kbd>&rarr;</kbd> 5s &middot;
-        <kbd>R</kbd> replay segment &middot; <kbd>L</kbd> loop segment &middot;
-        <kbd>+</kbd>/<kbd>−</kbd> zoom &middot; <kbd>Home</kbd>/<kbd>End</kbd> start/end &middot;
-        <kbd>Esc</kbd> leave the text field
-      </p>
-    </div>
-
-    <!-- Speaker roster -->
-    <div class="card speaker-card">
-      <div class="row" style="margin-bottom:.6rem">
-        <h2 style="margin:0">Speakers</h2>
-        <div class="stepper" role="group" aria-label="Number of speakers">
-          <button type="button" id="spk-minus" aria-label="Remove a speaker">&minus;</button>
-          <input type="number" id="spk-count" min="0" max="12" step="1"
-                 value="{{ speakers|length }}" aria-label="Number of speakers">
-          <button type="button" id="spk-plus" aria-label="Add a speaker">+</button>
-        </div>
-        <span class="save-state" id="spk-state"></span>
-        <div class="spacer"></div>
-        <span class="small muted">
-          Click a tag on a turn to assign it, or press
-          <kbd>1</kbd>&ndash;<kbd>9</kbd> on the turn you are reading.
-        </span>
-      </div>
-
-      <div id="speaker-rows" class="speaker-rows"></div>
-
-      <p class="small muted" id="speaker-empty" hidden>
-        No speakers yet. Add one or more above, give each a name and a short
-        tag, then click through the {{ noun }} assigning turns.
-      </p>
     </div>
 
     <!-- Transcript or English translation, as stored on this document -->
@@ -234,105 +205,6 @@
         </div>
       </div>
 
-      <section class="review-queue" id="review-queue" aria-labelledby="review-title">
-        <div class="row">
-          <div class="grow">
-            <h3 id="review-title">Review Mode</h3>
-            <p class="small muted" id="review-progress">Preparing review queue…</p>
-          </div>
-          <button type="button" class="btn btn-small btn-primary" id="review-next">
-            Next unresolved
-          </button>
-        </div>
-        <progress id="review-progress-bar" max="100" value="0"
-                  aria-label="Review completion"></progress>
-        <div class="review-filters" aria-label="Review queue filters">
-          <label class="chk"><input type="checkbox" data-review-filter="low_confidence" checked> Low confidence</label>
-          <label class="chk"><input type="checkbox" data-review-filter="artifact" checked> Possible artifacts</label>
-          <label class="chk"><input type="checkbox" data-review-filter="unassigned" checked> Unassigned speakers</label>
-          <label class="chk"><input type="checkbox" data-review-filter="flagged" checked> Flags</label>
-          <label class="chk"><input type="checkbox" data-review-filter="changed" checked> Changed since validation</label>
-        </div>
-        <div class="review-counts" id="review-counts" aria-live="polite"></div>
-        <p class="small muted" id="review-empty" hidden>Nothing unresolved matches these filters.</p>
-        <ol class="review-items" id="review-items"></ol>
-      </section>
-
-      <section class="card" id="deidentification-review" aria-labelledby="deidentification-title">
-        <h3 id="deidentification-title">De-identification review assistance</h3>
-        <p class="notice notice-warn">
-          Assistive flags only: findings can be missed or incorrect. Review the
-          transcript and every replacement yourself. This is not anonymization,
-          a compliance guarantee, or a substitute for an approved privacy review.
-        </p>
-        <p class="small muted">
-          The findings report and reversible replacement map stay in this local
-          project and are excluded from shareable project and review exports.
-        </p>
-        <div class="review-filters" aria-label="Identifier types to flag">
-          <label class="chk"><input type="checkbox" data-deid-flag="email" checked> Email</label>
-          <label class="chk"><input type="checkbox" data-deid-flag="phone" checked> Phone</label>
-          <label class="chk"><input type="checkbox" data-deid-flag="ssn" checked> Possible SSN</label>
-          <label class="chk"><input type="checkbox" data-deid-flag="date" checked> Dates</label>
-          <label class="chk"><input type="checkbox" data-deid-flag="ip_address" checked> IP address</label>
-          <label class="chk"><input type="checkbox" data-deid-flag="address" checked> Possible street address</label>
-          <label class="chk"><input type="checkbox" data-deid-flag="url" checked> Web address</label>
-        </div>
-        <div class="field">
-          <label for="deid-custom-patterns">Additional custom patterns (one per line: label: regex)</label>
-          <textarea id="deid-custom-patterns" rows="3"
-                    placeholder="Patient ID: \bPT-\d{6}\b"></textarea>
-        </div>
-        <div class="row">
-          <button type="button" class="btn btn-small btn-primary" id="deid-scan">
-            Scan for possible identifiers
-          </button>
-          <span class="small muted" id="deid-status" role="status" aria-live="polite"></span>
-        </div>
-        <div class="review-counts" id="deid-counts" aria-live="polite"></div>
-        <ol class="review-items" id="deid-items"></ol>
-      </section>
-
-      <section class="review-queue" id="annotations-panel" aria-labelledby="annotations-title">
-        <h3 id="annotations-title">Timestamped comments and questions</h3>
-        <p class="small muted">
-          Notes are saved with this transcript and travel in offline review packages.
-        </p>
-        <div class="field-row">
-          <div class="field">
-            <label for="annotation-time">Recording time (seconds)</label>
-            <input type="number" id="annotation-time" min="0" step="0.1" value="0">
-          </div>
-          <div class="field">
-            <label for="annotation-kind">Type</label>
-            <select id="annotation-kind">
-              <option value="comment">Comment</option>
-              <option value="question">Question</option>
-            </select>
-          </div>
-          <div class="field" style="align-self:end">
-            <button type="button" class="btn btn-small btn-quiet" id="annotation-use-playhead">
-              Use current playhead
-            </button>
-          </div>
-        </div>
-        <div class="field">
-          <label for="annotation-text">Comment or question</label>
-          <textarea id="annotation-text" maxlength="4000" rows="2"></textarea>
-        </div>
-        <div class="row">
-          <label class="field grow" for="annotation-author">
-            <span>Author (optional)</span>
-            <input type="text" id="annotation-author" maxlength="200">
-          </label>
-          <button type="button" class="btn btn-small btn-primary" id="annotation-add">
-            Add note
-          </button>
-        </div>
-        <p class="small muted" id="annotations-empty" hidden>No annotations yet.</p>
-        <ol class="review-items" id="annotations-list"></ol>
-      </section>
-
       <div id="stale-warning" class="notice notice-warn" hidden>
         <strong>Timings are out of date</strong>
         <span id="stale-text"></span>
@@ -341,19 +213,6 @@
         <div class="row" style="margin-top:.5rem">
           <button type="button" class="btn btn-small js-retimestamp">Re-timestamp</button>
         </div>
-      </div>
-
-      <div class="legend" style="margin-bottom:.7rem">
-        {% if show_confidence %}
-        <span><span class="swatch" style="background:#fdf0d8;box-shadow:inset 0 -2px 0 #e6b455"></span>
-          low model confidence (below {{ (low_confidence * 100) | int }}%)</span>
-        {% endif %}
-        <span><span class="swatch" style="background:var(--accent-soft)"></span> currently playing</span>
-        <span><span class="swatch" style="background:var(--warn-soft)"></span> edited, needs re-timestamping</span>
-        {% if proofreading.available and proofreading.language_supported %}
-        <span><span class="swatch swatch-spell"></span> not in dictionary</span>
-        <span><span class="swatch swatch-artefact"></span> likely transcription slip</span>
-        {% endif %}
       </div>
 
       {% if not proofreading.language_supported %}
@@ -391,6 +250,175 @@
 
   <!-- Side panel -->
   <aside class="side-panel">
+    <div class="tool-panels">
+      <details class="settings-group" id="tool-review">
+        <summary id="review-title">Review Mode</summary>
+        <div class="settings-body">
+          <section class="review-queue" id="review-queue" aria-labelledby="review-title">
+            <div class="row">
+              <div class="grow">
+                <p class="small muted" id="review-progress">Preparing review queue…</p>
+              </div>
+              <button type="button" class="btn btn-small btn-primary" id="review-next">
+                Next unresolved
+              </button>
+            </div>
+            <progress id="review-progress-bar" max="100" value="0"
+                      aria-label="Review completion"></progress>
+            <div class="review-filters" aria-label="Review queue filters">
+              <label class="chk"><input type="checkbox" data-review-filter="low_confidence" checked> Low confidence</label>
+              <label class="chk"><input type="checkbox" data-review-filter="artifact" checked> Possible artifacts</label>
+              <label class="chk"><input type="checkbox" data-review-filter="unassigned" checked> Unassigned speakers</label>
+              <label class="chk"><input type="checkbox" data-review-filter="flagged" checked> Flags</label>
+              <label class="chk"><input type="checkbox" data-review-filter="changed" checked> Changed since validation</label>
+            </div>
+            <div class="review-counts" id="review-counts" aria-live="polite"></div>
+            <p class="small muted" id="review-empty" hidden>Nothing unresolved matches these filters.</p>
+            <ol class="review-items" id="review-items"></ol>
+          </section>
+        </div>
+      </details>
+
+      <details class="settings-group" id="tool-speakers">
+        <summary>Speakers</summary>
+        <div class="settings-body speaker-card">
+          <div class="row" style="margin-bottom:.6rem">
+            <div class="stepper" role="group" aria-label="Number of speakers">
+              <button type="button" id="spk-minus" aria-label="Remove a speaker">&minus;</button>
+              <input type="number" id="spk-count" min="0" max="12" step="1"
+                     value="{{ speakers|length }}" aria-label="Number of speakers">
+              <button type="button" id="spk-plus" aria-label="Add a speaker">+</button>
+            </div>
+            <span class="save-state" id="spk-state"></span>
+          </div>
+          <p class="small muted">
+            Click a tag on a turn to assign it, or press
+            <kbd>1</kbd>&ndash;<kbd>9</kbd> on the turn you are reading.
+          </p>
+
+          <div id="speaker-rows" class="speaker-rows"></div>
+
+          <p class="small muted" id="speaker-empty" hidden>
+            No speakers yet. Add one or more above, give each a name and a short
+            tag, then click through the {{ noun }} assigning turns.
+          </p>
+        </div>
+      </details>
+
+      <details class="settings-group" id="tool-deid">
+        <summary id="deidentification-title">De-identification review assistance (assistive flags only)</summary>
+        <div class="settings-body">
+          <section id="deidentification-review" aria-labelledby="deidentification-title">
+            <p class="notice notice-warn">
+              Assistive flags only: findings can be missed or incorrect. Review the
+              transcript and every replacement yourself. This is not anonymization,
+              a compliance guarantee, or a substitute for an approved privacy review.
+            </p>
+            <p class="small muted">
+              The findings report and reversible replacement map stay in this local
+              project and are excluded from shareable project and review exports.
+            </p>
+            <div class="review-filters" aria-label="Identifier types to flag">
+              <label class="chk"><input type="checkbox" data-deid-flag="email" checked> Email</label>
+              <label class="chk"><input type="checkbox" data-deid-flag="phone" checked> Phone</label>
+              <label class="chk"><input type="checkbox" data-deid-flag="ssn" checked> Possible SSN</label>
+              <label class="chk"><input type="checkbox" data-deid-flag="date" checked> Dates</label>
+              <label class="chk"><input type="checkbox" data-deid-flag="ip_address" checked> IP address</label>
+              <label class="chk"><input type="checkbox" data-deid-flag="address" checked> Possible street address</label>
+              <label class="chk"><input type="checkbox" data-deid-flag="url" checked> Web address</label>
+            </div>
+            <div class="field">
+              <label for="deid-custom-patterns">Additional custom patterns (one per line: label: regex)</label>
+              <textarea id="deid-custom-patterns" rows="3"
+                        placeholder="Patient ID: \bPT-\d{6}\b"></textarea>
+            </div>
+            <div class="row">
+              <button type="button" class="btn btn-small btn-primary" id="deid-scan">
+                Scan for possible identifiers
+              </button>
+              <span class="small muted" id="deid-status" role="status" aria-live="polite"></span>
+            </div>
+            <div class="review-counts" id="deid-counts" aria-live="polite"></div>
+            <ol class="review-items" id="deid-items"></ol>
+          </section>
+        </div>
+      </details>
+
+      <details class="settings-group" id="tool-notes">
+        <summary id="annotations-title">Timestamped comments and questions</summary>
+        <div class="settings-body">
+          <section class="review-queue" id="annotations-panel" aria-labelledby="annotations-title">
+            <p class="small muted">
+              Notes are saved with this transcript and travel in offline review packages.
+            </p>
+            <div class="field-row">
+              <div class="field">
+                <label for="annotation-time">Recording time (seconds)</label>
+                <input type="number" id="annotation-time" min="0" step="0.1" value="0">
+              </div>
+              <div class="field">
+                <label for="annotation-kind">Type</label>
+                <select id="annotation-kind">
+                  <option value="comment">Comment</option>
+                  <option value="question">Question</option>
+                </select>
+              </div>
+              <div class="field" style="align-self:end">
+                <button type="button" class="btn btn-small btn-quiet" id="annotation-use-playhead">
+                  Use current playhead
+                </button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="annotation-text">Comment or question</label>
+              <textarea id="annotation-text" maxlength="4000" rows="2"></textarea>
+            </div>
+            <div class="row">
+              <label class="field grow" for="annotation-author">
+                <span>Author (optional)</span>
+                <input type="text" id="annotation-author" maxlength="200">
+              </label>
+              <button type="button" class="btn btn-small btn-primary" id="annotation-add">
+                Add note
+              </button>
+            </div>
+            <p class="small muted" id="annotations-empty" hidden>No annotations yet.</p>
+            <ol class="review-items" id="annotations-list"></ol>
+          </section>
+        </div>
+      </details>
+
+      <details class="settings-group" id="tool-help">
+        <summary>Help: shortcuts and highlight legend</summary>
+        <div class="settings-body">
+          <p class="ribbon-hint">
+            Click or focus the waveform and use the arrow keys to seek. Click a
+            word to replay it with the selected pre/post-roll. Hold the pointer
+            over a word to see how many other times it appears. Double-click a
+            word to find and replace it everywhere.
+            <kbd>Space</kbd> play/pause &middot;
+            <kbd>&larr;</kbd><kbd>&rarr;</kbd> 2s &middot;
+            <kbd>Shift</kbd>+<kbd>&larr;</kbd><kbd>&rarr;</kbd> 5s &middot;
+            <kbd>R</kbd> replay segment &middot; <kbd>L</kbd> loop segment &middot;
+            <kbd>+</kbd>/<kbd>−</kbd> zoom &middot; <kbd>Home</kbd>/<kbd>End</kbd> start/end &middot;
+            <kbd>Esc</kbd> leave the text field
+          </p>
+          <div class="legend">
+            {% if show_confidence %}
+            <span><span class="swatch" style="background:#fdf0d8;box-shadow:inset 0 -2px 0 #e6b455"></span>
+              low model confidence (below {{ (low_confidence * 100) | int }}%)</span>
+            {% endif %}
+            <span><span class="swatch" style="background:var(--accent-soft)"></span> currently playing</span>
+            <span><span class="swatch" style="background:var(--warn-soft)"></span> edited, needs re-timestamping</span>
+            {% if proofreading.available and proofreading.language_supported %}
+            <span><span class="swatch swatch-spell"></span> not in dictionary</span>
+            <span><span class="swatch swatch-artefact"></span> likely transcription slip</span>
+            {% endif %}
+          </div>
+        </div>
+      </details>
+    </div>
+
     <section class="card validation-panel" id="validation-panel"
              data-status="{{ workflow.status }}">
       <h3>Validation sign-off</h3>
@@ -646,5 +674,6 @@
 <script src="/static/js/deidentification.js"></script>
 <script src="/static/js/handoff.js"></script>
 <script src="/static/js/validation.js"></script>
+<script src="/static/js/tools.js"></script>
 {% endif %}
 {% endblock %}
