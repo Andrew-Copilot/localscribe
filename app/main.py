@@ -526,7 +526,7 @@ async def api_folder_picker(request: Request):
         selected = await asyncio.to_thread(
             folder_picker.choose_folder, str(initial_path or "")
         )
-    except Exception as exc:
+    except folder_picker.FolderPickerUnavailable as exc:
         raise HTTPException(
             status_code=503,
             detail="A desktop folder picker is unavailable. Enter the folder path manually.",

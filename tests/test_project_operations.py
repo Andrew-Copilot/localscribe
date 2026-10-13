@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from types import ModuleType
+from unittest import mock
+from unittest.mock import patch
 
 from app import folder_picker, projects
 
@@ -72,9 +75,9 @@ def test_native_picker_result_and_cancel():
         sys.modules["tkinter.filedialog"] = filedialog
         try:
             check("picker returns the selected absolute folder",
-                  folder_picker.choose_folder() == str(root_path.resolve()))
+                  folder_picker.pick_folder_in_process() == str(root_path.resolve()))
             check("picker cancellation leaves the path unchanged",
-                  folder_picker.choose_folder() == "")
+                  folder_picker.pick_folder_in_process() == "")
         finally:
             if old_tkinter is None:
                 sys.modules.pop("tkinter", None)
@@ -84,6 +87,34 @@ def test_native_picker_result_and_cancel():
                 sys.modules.pop("tkinter.filedialog", None)
             else:
                 sys.modules["tkinter.filedialog"] = old_filedialog
+
+
+def test_picker_runs_in_a_child_process_and_falls_back():
+    def child(answer, code=0):
+        def run(command, **_kwargs):
+            if answer is not None:
+                Path(command[2]).write_text(answer, encoding="utf-8")
+            return subprocess.CompletedProcess(command, code)
+        return run
+
+    with patch.object(folder_picker.subprocess, "run", child("C:\\Synthetic\\Folder\n")):
+        check("the folder chosen in the child process is returned",
+              folder_picker.choose_folder("") == "C:\\Synthetic\\Folder")
+    with patch.object(folder_picker.subprocess, "run", child("")):
+        check("cancelling the dialog returns an empty path",
+              folder_picker.choose_folder("") == "")
+    for label, runner in (
+        ("a dialog that cannot start", child(None, 1)),
+        ("a missing interpreter", mock.Mock(side_effect=OSError("synthetic"))),
+        ("a timeout", mock.Mock(side_effect=subprocess.TimeoutExpired("x", 1))),
+    ):
+        with patch.object(folder_picker.subprocess, "run", runner):
+            try:
+                folder_picker.choose_folder("")
+            except folder_picker.FolderPickerUnavailable:
+                check(f"{label} reports the picker as unavailable", True)
+            else:
+                check(f"{label} reports the picker as unavailable", False)
 
 
 def test_project_and_settings_controls_are_present():
@@ -114,6 +145,7 @@ def main() -> int:
     for test in (
         test_project_operation_and_queued_task,
         test_native_picker_result_and_cancel,
+        test_picker_runs_in_a_child_process_and_falls_back,
         test_project_and_settings_controls_are_present,
     ):
         print(f"\n{test.__name__}")
