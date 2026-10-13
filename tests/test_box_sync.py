@@ -233,6 +233,28 @@ def test_copy_verification_and_retry_after_interruption():
         check("archive bytes are non-empty", bool(digest))
 
 
+def test_failure_messages_name_the_cause_without_paths():
+    with backup_context() as (_root, destination, _settings, project, _):
+        manager = box_sync.BackupManager()
+        cases = (
+            ("an unbuildable archive", zipfile.BadZipFile(str(destination)), "archive could not be built"),
+            ("an unexpected error", RuntimeError(str(destination)), "stopped unexpectedly"),
+        )
+        for label, error, expected in cases:
+            with patch.object(projects, "export_project", side_effect=error):
+                job = manager.submit(
+                    project["slug"],
+                    confirm_sync_destination=True,
+                    independently_verified_box_health=False,
+                )
+                failed = wait_for_job(manager, project["slug"], job["job_id"])
+            check(f"{label} fails with a specific message",
+                  failed["status"] == "failed" and expected in failed["error"], failed["error"])
+            check(f"{label} does not expose the destination path",
+                  str(destination) not in failed["error"])
+        check("failed backups publish no archive", not list(destination.glob("*.lsproj")))
+
+
 def test_cancellation_cleans_partial_output():
     with backup_context() as (_root, destination, settings, project, _):
         manager = box_sync.BackupManager()
@@ -367,6 +389,7 @@ def main() -> int:
     for test in (
         test_explicit_destination_and_sensitivity_gate,
         test_copy_verification_and_retry_after_interruption,
+        test_failure_messages_name_the_cause_without_paths,
         test_cancellation_cleans_partial_output,
         test_backup_api_and_project_ui,
     ):

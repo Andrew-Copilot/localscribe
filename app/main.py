@@ -125,6 +125,21 @@ async def same_origin_guard(request: Request, call_next):
     return response
 
 
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception):
+    """Give the page a readable message; the exception type is logged, never its content."""
+    CONSOLE.error(
+        f"Unexpected error handling {request.method} {request.url.path}: {type(exc).__name__}"
+    )
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(
+            {"detail": "Local Scribe hit an unexpected problem. See the console "
+                       "for the error type."},
+            status_code=500,
+        )
+    return Response("Internal Server Error", status_code=500, media_type="text/plain")
+
+
 def require_same_origin_ws(websocket: WebSocket) -> bool:
     origin = websocket.headers.get("origin")
     if origin is None:

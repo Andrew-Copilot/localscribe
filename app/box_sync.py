@@ -6,9 +6,11 @@ import hashlib
 import shutil
 import threading
 import uuid
+import zipfile
 from pathlib import Path
 
 from . import activity, config, projects
+from .console import CONSOLE
 from .sensitivity import future_backup_gate
 
 MAX_JOBS = 50
@@ -17,6 +19,24 @@ COPY_CHUNK_BYTES = 1024 * 1024
 
 class BackupError(Exception):
     """A local backup cannot safely start or complete."""
+
+
+def _failure_message(exc: Exception) -> str:
+    """A user-facing reason that never includes paths or project content."""
+    if isinstance(exc, (zipfile.BadZipFile, zipfile.LargeZipFile)):
+        return (
+            "The project archive could not be built, so nothing was copied. "
+            "Check the Local Scribe console for the error type."
+        )
+    if isinstance(exc, OSError):
+        return (
+            "The archive could not be written. Check that the Box Sync folder is "
+            "writable and has free space, then retry."
+        )
+    return (
+        "The backup stopped unexpectedly and nothing was copied. "
+        "Check the Local Scribe console for the error type, then retry."
+    )
 
 
 def configured_destination() -> Path:
@@ -280,12 +300,13 @@ class BackupManager:
                 stage="failed",
                 error=str(exc),
             )
-        except Exception:
+        except Exception as exc:
+            CONSOLE.error(f"Box Sync backup failed ({type(exc).__name__}).")
             self._update(
                 job_id,
                 status="failed",
                 stage="failed",
-                error="Backup failed. Check folder permissions and available space, then retry.",
+                error=_failure_message(exc),
             )
         finally:
             activity.record(
