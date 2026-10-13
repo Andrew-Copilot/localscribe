@@ -46,13 +46,13 @@
     },
     {
       "path": "documents/fixture-document/outputs/synthetic-interview.srt",
-      "size_bytes": 128,
-      "sha256": "c107ff6c79eefc74cf1e908eef3b75e82405fe581b8246f45b20e9d63522842b"
+      "size_bytes": 121,
+      "sha256": "7965bc1e911071b7431e76d138dfba7b8defaedd0d93b90fbedb412d22b6aa40"
     },
     {
       "path": "documents/fixture-document/outputs/synthetic-interview.vtt",
-      "size_bytes": 390,
-      "sha256": "65ee6ce228827a93a7dfc8577735189b9d3cd02554e95c31346950f752fce63a"
+      "size_bytes": 371,
+      "sha256": "e13b0ee53f3a40c5ed8dcffafd85edbc514c2d124faef37b85aa3ffa282acb1e"
     },
     {
       "path": "documents/fixture-document/transcript.json",
