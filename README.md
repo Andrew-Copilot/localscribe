@@ -1,6 +1,6 @@
 # Local Scribe
 
-## Free and open-source AI-based automated audio transcription, captioning, and easy transcript editing software for researchers. 
+## Free and open-source AI-based automated audio transcription in many languages, English translation, captioning, and easy transcript review and editing software for researchers. 
 
 **Retain full data custody on your own computer: no transferring to any third parties for transcription.**
 
@@ -24,7 +24,7 @@ An app by the [UIC TRAILblazer Lab](https://www.trailblazerlab.org); Jeremy Riel
 
 Given the emerging capabilities of open-source language models, The UIC TRAILblazer Lab presents a
 free, open-source, and AI-based automated transcription app that can transcribe audio and
-video file sound into workable transcription files. Also included is a transcript editor to work on transcripts after they are generated in-app. Designed for
+video file sound, in many languages or translated to English, into workable transcription files. Also included is a transcript editor and review workflow to work on transcripts after they are generated in-app. Designed for
 researchers, by researchers, who are concerned about data security and protection of our research subjects' privacy in the age of AI. You don't need to send data to the cloud for transcription anymore. 
 
 Speed up transcript generation, keep your data fully secure and in your custody, and keep humans as the validators of data. 
