@@ -20,6 +20,7 @@ _RECOVERY_ACTIONS = {
     "snapshot_create",
     "snapshot_restore",
 }
+_BACKUP_ACTIONS = {"box_sync_backup"}
 _REMOTE_ACTIONS = {
     "box_sync_backup",
     "gpu_support_install",
@@ -81,6 +82,16 @@ def label(action: str) -> str:
     if not isinstance(action, str):
         return "Other activity"
     return LABELS.get(action, "Other activity")
+
+
+def groups(action) -> tuple[str, ...]:
+    """Which history filters an action belongs to; a Box Sync backup is both."""
+    found = []
+    if action in _REMOTE_ACTIONS:
+        found.append("network")
+    if action in _RECOVERY_ACTIONS or action in _BACKUP_ACTIONS:
+        found.append("recovery")
+    return tuple(found)
 
 
 def record(
@@ -289,6 +300,7 @@ def history_rows(events, titles: dict | None = None, now: datetime | None = None
         row = {
             "type": kind,
             "type_label": TYPE_LABELS[kind],
+            "groups": " ".join(groups(action)),
             "day": _day_label(moment, today) if moment else "Unknown date",
             "time": _clock(moment) if moment else str(event.get("timestamp") or ""),
             "timestamp": event.get("timestamp"),
@@ -296,6 +308,7 @@ def history_rows(events, titles: dict | None = None, now: datetime | None = None
             "summary": summarize(action, outcome),
             "detail": f"{action} · {outcome}",
             "project": None,
+            "ref": str(ref)[:8] if ref else "",
         }
         if ref:
             row["project"] = (titles or {}).get(ref) or "A deleted or unknown project"
@@ -313,3 +326,13 @@ def history_rows(events, titles: dict | None = None, now: datetime | None = None
         row["status_label"] = STATUS_LABELS[row["status"]]
     rows.reverse()
     return rows
+
+
+def filter_counts(rows) -> dict[str, int]:
+    """How many rows each history filter shows."""
+    rows = list(rows or [])
+    return {
+        "all": len(rows),
+        "network": sum("network" in row["groups"].split() for row in rows),
+        "recovery": sum("recovery" in row["groups"].split() for row in rows),
+    }

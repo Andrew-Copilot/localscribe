@@ -86,14 +86,15 @@
   {% if activities %}
   <div class="row" style="margin:.6rem 0">
     <fieldset class="history-filter">
-      <legend class="sr-only">Show</legend>
-      <label class="chk"><input type="radio" name="history-type" value="all" checked> All</label>
-      <label class="chk"><input type="radio" name="history-type" value="network"> Online</label>
-      <label class="chk"><input type="radio" name="history-type" value="recovery"> Data safety</label>
+      <legend>Show</legend>
+      <label class="chk"><input type="radio" name="history-type" value="all" checked> All ({{ activity_counts.all }})</label>
+      <label class="chk"><input type="radio" name="history-type" value="network"> Online ({{ activity_counts.network }})</label>
+      <label class="chk"><input type="radio" name="history-type" value="recovery"> Data safety ({{ activity_counts.recovery }})</label>
     </fieldset>
     <span class="spacer"></span>
     <label class="chk"><input type="checkbox" id="history-technical"> Show technical details</label>
   </div>
+  <p class="small" id="history-status" role="status" aria-live="polite">Showing all {{ activity_counts.all }} events.</p>
   <div class="table-wrap">
     <table id="history-table">
       <thead><tr><th>Time</th><th>What happened</th><th>Result</th></tr></thead>
@@ -104,12 +105,12 @@
             {% set shown.day = row.day %}
             <tr class="history-day" data-day="{{ row.day }}"><th colspan="3" scope="colgroup">{{ row.day }}</th></tr>
           {% endif %}
-          <tr class="history-row" data-type="{{ row.type }}" data-day="{{ row.day }}">
+          <tr class="history-row" data-groups="{{ row.groups }}" data-day="{{ row.day }}">
             <td class="small nowrap">{{ row.time }}</td>
             <td>
               {{ row.summary }}
               {% if row.project %}<span class="muted"> &middot; {{ row.project }}</span>{% endif %}
-              <div class="small muted history-technical" hidden>{{ row.type_label }} &middot; {{ row.detail }} &middot; {{ row.timestamp }}</div>
+              <div class="small muted history-technical" hidden>{{ row.type_label }} &middot; {{ row.detail }} &middot; {{ row.timestamp }}{% if row.ref %} &middot; project reference {{ row.ref }}{% endif %}</div>
             </td>
             <td>
               <span class="badge {{ 'badge-ok' if row.status == 'success' else ('badge-err' if row.status == 'failed' else ('badge-warn' if row.status == 'cancelled' else '')) }}">{{ row.status_label }}</span>
@@ -119,7 +120,9 @@
       </tbody>
     </table>
   </div>
-  <p class="small muted" id="history-empty" hidden>No events of this kind.</p>
+  <p class="small muted" id="history-empty" hidden
+     data-empty-network="No online activity is recorded. Update checks, model downloads and Box Sync backups appear here when they happen."
+     data-empty-recovery="No snapshots, backups, restores or deletions are recorded yet. They appear here when they happen."></p>
   {% else %}
   <p class="muted">No activity recorded yet.</p>
   {% endif %}
@@ -154,5 +157,6 @@
 <script>
   window.ACTIVITY_LABELS = {{ activity_labels|tojson }};
 </script>
+<script src="/static/js/history.js"></script>
 <script src="/static/js/privacy.js"></script>
 {% endblock %}

@@ -111,11 +111,85 @@ def test_history_rows_are_readable_and_merge_started_results():
           all(r["day"] == "Today" and r["time"][-2:] in ("AM", "PM") for r in rows))
 
 
+def test_history_filters_group_backups_with_both_views():
+    stamp = "2026-10-12T20:16:23-05:00"
+    now = datetime.fromisoformat(stamp)
+    ref = activity._project_ref("synthetic-1")
+    events = [
+        {"timestamp": stamp, "action": "update_check", "outcome": "completed"},
+        {"timestamp": stamp, "action": "box_sync_backup", "outcome": "completed", "project_ref": ref},
+        {"timestamp": stamp, "action": "snapshot_create", "outcome": "completed", "project_ref": ref},
+        {"timestamp": stamp, "action": "project_delete", "outcome": "deleted_with_snapshot"},
+        {"timestamp": stamp, "action": "not_allow_listed", "outcome": "completed"},
+    ]
+    rows = activity.history_rows(events, now=now)
+    by_action = {r["summary"]: r["groups"].split() for r in rows}
+    check("an update check is only an online event",
+          by_action["Checked for updates"] == ["network"])
+    check("a Box Sync backup is both online and data safety",
+          by_action["Backed up a project to your Box Sync folder"] == ["network", "recovery"])
+    check("snapshots and deletions are data safety",
+          by_action["Created a recovery snapshot"] == ["recovery"]
+          and by_action["Deleted a project after saving a recovery snapshot"] == ["recovery"])
+    check("events outside the allow-list are not shown", len(rows) == 4)
+    counts = activity.filter_counts(rows)
+    check("filter counts match what each view shows",
+          counts == {"all": 4, "network": 2, "recovery": 3})
+    check("technical details carry only a short one-way project reference",
+          all(len(r["ref"]) in (0, 8) and ref not in r["detail"] for r in rows))
+    check("every row states its outcome in words",
+          all(r["status_label"] in activity.STATUS_LABELS.values() for r in rows))
+    check("the filters can be told apart in text",
+          counts["recovery"] != counts["network"])
+
+
+def test_activity_page_renders_filters_and_stays_content_free():
+    from fastapi.testclient import TestClient
+
+    from app import projects, update_check
+
+    update_check.refresh_state_async = lambda: None
+    from app import main
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        root = Path(tmp)
+        paths = replace(
+            config.PATHS, projects=root / "projects", logs=root / "logs",
+            models=root / "models", settings_file=root / "settings.json",
+        )
+        with patch.object(projects, "PATHS", paths), patch.object(config, "PATHS", paths):
+            project = projects.create_project("Synthetic Title Sentinel")
+            pid = project["project_id"]
+            activity.record("update_check", outcome="started")
+            activity.record("update_check", outcome="completed")
+            activity.record("box_sync_backup", pid, "failed")
+            activity.record("snapshot_create", pid)
+            stored = (paths.logs / "project-activity.json").read_text(encoding="utf-8")
+            page = TestClient(main.app).get("/privacy").text
+    check("the stored log never contains the project title or paths",
+          "Synthetic Title Sentinel" not in stored and str(root) not in stored)
+    check("the page names the project it resolved at render time",
+          "Synthetic Title Sentinel" in page)
+    check("the three filters are real radio inputs with counts",
+          'name="history-type" value="all" checked> All (3)' in page
+          and 'value="network"> Online (2)' in page
+          and 'value="recovery"> Data safety (2)' in page)
+    check("the live status line and per-filter empty explanations exist",
+          'id="history-status" role="status" aria-live="polite"' in page
+          and 'data-empty-network=' in page and 'data-empty-recovery=' in page)
+    check("rows carry their filter groups and a text outcome",
+          'data-groups="network recovery"' in page and ">Failed<" in page)
+    check("the filter script is loaded before the page script",
+          page.index("/static/js/history.js") < page.index("/static/js/privacy.js"))
+
+
 def main() -> int:
     for test in (
         test_diagnostics_are_allowlisted_and_path_free,
         test_activity_records_network_actions_without_free_text,
         test_history_rows_are_readable_and_merge_started_results,
+        test_history_filters_group_backups_with_both_views,
+        test_activity_page_renders_filters_and_stays_content_free,
     ):
         print(f"\n{test.__name__}")
         test()

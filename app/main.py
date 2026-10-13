@@ -238,9 +238,9 @@ async def page_index(request: Request):
             projects=projects.list_projects(),
             snapshots=projects.list_all_snapshots(),
             activities=activity.history_rows([
-                event for event in activity.recent()
-                if activity.category(event.get("action")) == "recovery"
-            ]),
+                event for event in activity.recent(limit=activity.HISTORY_LIMIT)
+                if "recovery" in activity.groups(event.get("action"))
+            ])[:10],
         ),
     )
 
@@ -263,10 +263,11 @@ async def page_project(request: Request, slug: str):
             snapshots=projects.list_snapshots(slug),
             activities=activity.history_rows([
                 event for event in activity.recent(
-                    project.get("project_id") or project["slug"]
+                    project.get("project_id") or project["slug"],
+                    limit=activity.HISTORY_LIMIT,
                 )
-                if activity.category(event.get("action")) == "recovery"
-            ]),
+                if "recovery" in activity.groups(event.get("action"))
+            ])[:10],
             box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
             vocabulary_profiles=profiles,
             vocabulary_profile_available=any(
@@ -384,7 +385,8 @@ async def page_settings(request: Request):
 
 @app.get("/privacy", response_class=HTMLResponse)
 async def page_privacy(request: Request):
-    events = activity.recent()
+    events = activity.recent(limit=activity.HISTORY_LIMIT)
+    rows = activity.history_rows(events, activity.title_index(projects.list_projects()))
     return templates.TemplateResponse(
         request,
         "privacy.html",
@@ -397,9 +399,8 @@ async def page_privacy(request: Request):
                 "logs": str(PATHS.logs),
                 "settings": str(PATHS.settings_file),
             },
-            activities=activity.history_rows(
-                events, activity.title_index(projects.list_projects())
-            ),
+            activities=rows,
+            activity_counts=activity.filter_counts(rows),
             activity_labels=activity.LABELS,
         ),
     )
