@@ -1,4 +1,4 @@
-/* AI Settings: collect the schema-generated form, model downloads, GPU setup. */
+/* Settings: collect the schema-generated form, model downloads, GPU setup. */
 
 (() => {
   const form = document.getElementById('settings-form');
@@ -47,29 +47,6 @@
     state.className = `save-state ${cls || ''}`.trim();
     const bar = document.getElementById('settings-actions');
     if (bar) bar.classList.toggle('is-dirty', cls === 'dirty');
-  }
-
-  const browseBoxFolder = document.getElementById('browse-box-folder');
-  if (browseBoxFolder) {
-    browseBoxFolder.addEventListener('click', async () => {
-      const path = document.getElementById('f-box_sync_destination');
-      browseBoxFolder.disabled = true;
-      browseBoxFolder.textContent = 'Choosing…';
-      try {
-        const result = await LS.post('/api/folder-picker', {
-          initial_path: path.value.trim(),
-        });
-        if (result.path) {
-          path.value = result.path;
-          path.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-      } catch (err) {
-        LS.toast(`Could not open a folder picker: ${err.message}. You can enter the path manually.`, 'warn', 9000);
-      } finally {
-        browseBoxFolder.disabled = false;
-        browseBoxFolder.textContent = 'Browse…';
-      }
-    });
   }
 
   if (form) {

@@ -377,7 +377,7 @@ def operation_problem(model_key: str, operation: str, hardware: dict | None = No
         advice = (
             f" Suggested: {suggestion['label']}"
             + ("" if suggestion["downloaded"] else " (not downloaded yet)")
-            + ". Choose it in AI Settings."
+            + ". Choose it in Settings."
         )
     return support["reason"] + " Translate to English needs a standard multilingual model." + advice
 
@@ -557,7 +557,7 @@ def probe_hardware() -> dict:
                 f"{names} detected, but the CUDA support libraries are "
                 f"missing ({', '.join(absent)}). This is usually a missing "
                 "cuDNN 9 or cuBLAS 12 library. Use 'Install GPU support' in "
-                "AI Settings to add them. Transcription runs on CPU until then."
+                "Settings to add them. Transcription runs on CPU until then."
             )
     elif gpu_names:
         names = ", ".join(sorted(set(gpu_names)))
@@ -577,7 +577,7 @@ def probe_hardware() -> dict:
             info["warnings"].append(
                 f"{count} NVIDIA GPU(s) detected ({names}) but the CUDA runtime "
                 "cannot use them. This is usually a missing cuDNN 9 or cuBLAS "
-                "12 library. Use 'Install GPU support' in AI Settings to add "
+                "12 library. Use 'Install GPU support' in Settings to add "
                 "them. Transcription runs on CPU until then."
             )
 
@@ -720,7 +720,7 @@ def _explain_cuda_failure(message: str, driver: str | None) -> str:
     if "cudnn" in lowered or "cublas" in lowered:
         return (
             "An NVIDIA GPU is present but the CUDA support libraries are "
-            "missing. Use 'Install GPU support' in AI Settings to add cuDNN 9 "
+            "missing. Use 'Install GPU support' in Settings to add cuDNN 9 "
             f"and cuBLAS 12. Original error: {message}"
         )
     return (

@@ -424,7 +424,7 @@ class JobQueue:
         profile = vocabulary.get_profile(project.get("vocabulary_profile_id"))
         overrides = vocabulary.transcription_overrides(settings, glossary, profile)
         # The operation is always passed explicitly, so the project's choice
-        # (not whatever the AI Settings default is) decides what runs.
+        # (not whatever the Settings default is) decides what runs.
         overrides["task"] = operation
         requested_language = job.payload.get("language")
         if requested_language:
@@ -672,7 +672,7 @@ class JobQueue:
         if SETTINGS.get("offline_lock"):
             raise RuntimeError(
                 "The offline lock is engaged, so no download can be made. Turn "
-                "it off in AI Settings if you intend to download a model, then "
+                "it off in Settings if you intend to download a model, then "
                 "turn it back on afterwards."
             )
 
@@ -732,7 +732,7 @@ class JobQueue:
             model=model_key, path=str(path),
         )
         CONSOLE.info(
-            "Tip: engage the offline lock in AI Settings now to guarantee no "
+            "Tip: engage the offline lock in Settings now to guarantee no "
             "further network access."
         )
 

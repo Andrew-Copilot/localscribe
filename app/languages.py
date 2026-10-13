@@ -155,12 +155,12 @@ def unsupported_reason(code: str, *, model_key: str = "", english_only: bool = F
         return (
             f"The selected model ({model_key or 'English-only'}) only transcribes "
             f"English, so it cannot transcribe {name(code)}. Choose a "
-            "multilingual model in AI Settings, or set the language to English."
+            "multilingual model in Settings, or set the language to English."
         )
     if code in _V3_ONLY and "large-v3" not in (model_key or ""):
         return (
             f"{name(code)} is only supported by the Large v3 family of models. "
-            "Choose Large v3 or Large v3 Turbo in AI Settings."
+            "Choose Large v3 or Large v3 Turbo in Settings."
         )
     return None
 

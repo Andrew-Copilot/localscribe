@@ -188,7 +188,7 @@ async def on_startup() -> None:
     if not status["model_downloaded"]:
         spec = catalog.model_spec(status["selected_model"])
         CONSOLE.warn(
-            f"No Whisper model is downloaded yet. Open AI Settings and "
+            f"No Whisper model is downloaded yet. Open Settings and "
             f"download {spec.label if spec else status['selected_model']} "
             f"({spec.download_mb if spec else '?'} MB) before transcribing.",
         )
@@ -390,13 +390,21 @@ async def page_settings(request: Request):
 @app.get("/privacy", response_class=HTMLResponse)
 async def page_privacy(request: Request):
     events = activity.recent(limit=activity.HISTORY_LIMIT)
-    rows = activity.history_rows(events, activity.title_index(projects.list_projects()))
+    listing = projects.list_projects()
+    rows = activity.history_rows(events, activity.title_index(listing))
+    backup_summary = {
+        "total": len(listing),
+        "with_folder": sum(
+            bool(projects.load_backup_record(p["slug"])["destination"]) for p in listing
+        ),
+    }
     return templates.TemplateResponse(
         request,
         "privacy.html",
         base_context(
             request,
             values=SETTINGS.all(),
+            backup_summary=backup_summary,
             storage_paths={
                 "projects": str(PATHS.projects),
                 "models": str(PATHS.models),
@@ -606,7 +614,7 @@ async def api_save_settings(request: Request):
 @app.post("/api/settings/reset")
 async def api_reset_settings():
     before = SETTINGS.all()
-    values = SETTINGS.reset()
+    values = SETTINGS.reset(keep=("box_sync_destination",))
     if before.get("offline_lock") != values.get("offline_lock"):
         activity.record(
             "offline_lock_changed",
@@ -640,7 +648,7 @@ async def api_download_model(model_key: str):
     if SETTINGS.get("offline_lock"):
         raise HTTPException(
             status_code=409,
-            detail="The offline lock is engaged. Turn it off in AI Settings to "
+            detail="The offline lock is engaged. Turn it off in Settings to "
                    "download a model, then turn it back on.",
         )
     job = QUEUE.submit_download(model_key)
@@ -1106,7 +1114,7 @@ async def api_transcribe(slug: str, request: Request):
             )
 
     # The spoken language: an explicit choice for this run, then the
-    # project's saved choice, then the AI Settings default. "auto" means
+    # project's saved choice, then the Settings default. "auto" means
     # detect it from the audio.
     explicit = None
     if isinstance(payload, dict) and payload.get("language") not in (None, ""):
@@ -1136,7 +1144,7 @@ async def api_transcribe(slug: str, request: Request):
             status_code=409,
             detail=(
                 f"{spec.label if spec else status['selected_model']} has not "
-                "been downloaded yet. Open AI Settings and download it first."
+                "been downloaded yet. Open Settings and download it first."
             ),
         )
 

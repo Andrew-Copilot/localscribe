@@ -8,6 +8,14 @@ from datetime import datetime, timezone
 
 from . import config, projects
 
+_SAFE_TEXT = re.compile(r"[0-9A-Za-z._+ -]{1,32}")
+
+
+def _safe_text(value) -> str:
+    """A short platform label, or "unknown" if it is not plainly a version-like token."""
+    return value if isinstance(value, str) and _SAFE_TEXT.fullmatch(value) else "unknown"
+
+
 def build(engine_status: dict | None = None) -> dict:
     """Return only reviewed, non-content runtime facts for user inspection."""
     engine = engine_status or {}
@@ -21,7 +29,7 @@ def build(engine_status: dict | None = None) -> dict:
         elif re.fullmatch(r"cuda:\d{1,2}", raw_device):
             safe_device = raw_device
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).astimezone().isoformat(
             timespec="seconds"
         ),
@@ -31,6 +39,10 @@ def build(engine_status: dict | None = None) -> dict:
         },
         "runtime": {
             "operating_system": platform.system(),
+            # Platform and CPU architecture decide which GPU path and which
+            # native wheels apply, which is most of what support needs to know.
+            "operating_system_release": _safe_text(platform.release()),
+            "architecture": _safe_text(platform.machine()),
             "python_version": platform.python_version(),
         },
         "privacy": {

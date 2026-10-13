@@ -284,7 +284,7 @@
             const link = document.createElement('a');
             link.className = 'btn btn-small';
             link.href = '/settings';
-            link.textContent = `Download ${suggestion.label} in AI Settings`;
+            link.textContent = `Download ${suggestion.label} in Settings`;
             row.appendChild(link);
           }
           opNote.appendChild(row);
@@ -313,7 +313,7 @@
       operation = radio.value === 'translate' ? 'translate' : 'transcribe';
       render();          // labels, buttons, explanations, compatibility: immediately
       try {
-        // Per project. This never rewrites the AI Settings default, and it
+        // Per project. This never rewrites the Settings default, and it
         // never touches a recording that already has a result.
         await LS.put(`/api/projects/${encodeURIComponent(slug)}`, { operation });
       } catch (err) {

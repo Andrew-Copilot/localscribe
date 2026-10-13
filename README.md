@@ -173,7 +173,7 @@ by hand.
 
 - **Windows and Linux (PC):** Transcription runs through CTranslate2, which
   uses an NVIDIA GPU via CUDA when one is present and its support libraries
-  are installed, and falls back to CPU otherwise. AI Settings shows exactly
+  are installed, and falls back to CPU otherwise. Settings shows exactly
   what was detected and has a one-click **Install GPU support** button when
   the CUDA libraries are missing.
 - **macOS (Apple Silicon):** On M-series Macs, Local Scribe takes advantage
@@ -183,21 +183,21 @@ by hand.
   separate CPU and GPU memory and there is no fixed VRAM ceiling to plan
   around. This gives Apple Silicon Macs genuine GPU-accelerated
   transcription with no discrete graphics card required, typically several
-  times faster than CPU-only transcription. AI Settings offers a matching
+  times faster than CPU-only transcription. Settings offers a matching
   set of "(Apple GPU)" models when MLX is available, and recommends one
   sized to your Mac's memory. Intel Macs, and Apple Silicon Macs where MLX
   isn't installed, fall back to CPU automatically.
 
-Either way, AI Settings recommends a model and device for your specific
+Either way, Settings recommends a model and device for your specific
 hardware and explains its reasoning; you can always override it, including
 forcing CPU-only if you ever want to.
 
 ## First use: Things you want to do
 
-1. Open **AI Settings** and download a model. `large-v3-turbo` (1.6 GB) is the
+1. Open **Settings** and download a model. `large-v3-turbo` (1.6 GB) is the
    recommended default; the page recommends one based on your hardware and
    explains why.
-2. Turn on **Offline lock** in AI Settings → Privacy. All outbound network
+2. Turn on **Offline lock** in Settings → Privacy & Network. All outbound network
    access is then blocked inside the process, enforced at the socket level.
 3. Back on **Projects**, create a project, add recordings, choose **Transcribe**
    or **Translate to English**, choose the **Spoken language** (leave it on
@@ -233,7 +233,7 @@ menu next to the Transcribe button.
   language, or when detection picks the wrong one. The exports record that the
   language was selected rather than detected.
 - The choice is remembered per project. Projects that have not chosen one start
-  from **AI Settings → Language and vocabulary → Spoken language**, which is
+  from **Settings → Language and vocabulary → Spoken language**, which is
   also the default for new projects.
 - English-only models (marked "English only" in the model table's Languages
   column) only accept English or automatic detection. Cantonese needs Large v3
@@ -251,7 +251,7 @@ want to do, and remembers the answer for that project:
 
 Switching the choice changes the buttons, explanations and model advice at
 once, and affects only what you run next. Recordings that already have a result
-keep the label they were made under. New projects start from **AI Settings →
+keep the label they were made under. New projects start from **Settings →
 Language and vocabulary → Default operation for new projects**; changing a
 project never changes that default, and projects made before this choice
 existed stay on Transcribe.
@@ -261,7 +261,7 @@ for translation: asked to translate, it returns the spoken language instead of
 English. English-only models cannot translate other languages either. Local
 Scribe therefore refuses to start a translation with them (in the page and
 again on the server), explains why, and names a suitable model without
-selecting or downloading anything. AI Settings shows which models can translate
+selecting or downloading anything. Settings shows which models can translate
 and gives a separate recommendation for it. Small is the practical choice on
 most computers, Medium or Large v3 give better quality, and Tiny and Base are
 allowed but too weak to trust.
@@ -294,7 +294,7 @@ service.
   every other language, so non-English transcripts are not proofread
   automatically. "Next uncertain word" still works.
 - A file that mixes languages is transcribed in one language unless you enable
-  **Allow language switching mid-file** in AI Settings.
+  **Allow language switching mid-file** in Settings.
 - Chinese, Japanese, Thai, Lao, Burmese and Cantonese are written without
   spaces between words, so the "Words" figure for them is a character count
   (labelled "Characters" in exports) and captions break between characters.
@@ -385,12 +385,15 @@ source media is missing, while keeping their transcripts available. See the
 [`.lsproj` interchange format specification](docs/lsproj-format.md) for the
 manifest, provenance, integrity, and migration contract.
 
-### Privacy Center
+### Activity & Diagnostics
 
-Open **Privacy Center** in the top navigation to review Offline Lock, the
-explicitly configured local Box Sync backup folder, local storage locations,
-the last network-affecting action, and a bounded activity history for network
-and recovery actions. AI Settings also offers local-only health checks for free
+Open **Activity & Diagnostics** in the top navigation to review Offline Lock,
+how many projects have a backup folder, the last network-affecting action, and a
+bounded activity history that can be filtered to Online or Data safety events
+(a Box Sync backup appears under both) with optional technical details. Storage
+locations and the sanitized diagnostics preview are in collapsed sections
+further down. Settings is organized into AI & Transcription, Application, and
+Privacy & Network, and also offers local-only health checks for free
 storage, data-folder access, selected model files, and the supported Python
 runtime. Model downloads show their estimated transfer size and a recommended
 free-space reserve before starting. These checks inspect local state only; they
@@ -420,7 +423,7 @@ that process, or start with `--port 43711`.
 
 **Transcription is slower than expected.**
 Check the status pill in the top bar. If it says CPU while you have an NVIDIA
-GPU, open AI Settings — the hardware panel explains why the GPU is unavailable.
+GPU, open Settings — the hardware panel explains why the GPU is unavailable.
 The usual causes are a missing CUDA support library (there is an install
 button) or an NVIDIA driver older than 527.
 
@@ -429,7 +432,7 @@ On an NVIDIA PC, the GPU needs two CUDA libraries, cuBLAS 12 and cuDNN 9,
 which a fresh Windows install does not include. Local Scribe now checks for
 them before choosing the GPU, and switches to CPU automatically if one is still
 missing once transcription starts. To use the GPU, click **Install GPU
-support** in AI Settings, then restart Local Scribe. If the missing file is
+support** in Settings, then restart Local Scribe. If the missing file is
 `msvcp140.dll` or another `vcruntime`/`msvcp` file, install the
 [Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)
 and restart. The installer bundles these files, so this should only affect
@@ -443,7 +446,7 @@ re-transcribe the file, or check that "Keep browser preview audio" is on in AI
 Settings.
 
 **The transcript repeats a phrase over and over.**
-Turn off "Condition on previous text" in AI Settings → Quality gates, or raise
+Turn off "Condition on previous text" in Settings → Quality gates, or raise
 the repetition penalty slightly, then re-transcribe.
 
 ## Tests you can run on the software

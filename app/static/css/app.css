@@ -70,6 +70,7 @@ hr { border: 0; border-top: 1px solid var(--line-2); margin: 1.25rem 0; }
 .topbar {
   position: sticky; top: 0; z-index: 40;
   display: flex; align-items: center; gap: 1.25rem;
+  flex-wrap: wrap; row-gap: .4rem;
   padding: .55rem 1.1rem;
   background: rgba(253, 252, 246, .94);
   backdrop-filter: blur(8px);
@@ -82,7 +83,7 @@ hr { border: 0; border-top: 1px solid var(--line-2); margin: 1.25rem 0; }
 .brand-text strong { font-size: 1rem; letter-spacing: -.01em; }
 .brand-text small { color: var(--ink-3); font-size: .72rem; }
 
-.nav { display: flex; gap: .2rem; margin-left: .5rem; }
+.nav { display: flex; flex-wrap: wrap; gap: .2rem; margin-left: .5rem; }
 .nav a {
   padding: .35rem .7rem; border-radius: var(--radius-s);
   color: var(--ink-2); font-size: .9rem; font-weight: 500;
@@ -90,7 +91,15 @@ hr { border: 0; border-top: 1px solid var(--line-2); margin: 1.25rem 0; }
 .nav a:hover { background: var(--surface-2); text-decoration: none; }
 .nav a.on { background: var(--accent-soft); color: var(--accent-dark); }
 
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+.topbar-right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+
+.section-nav { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 1rem; }
+.section-nav a {
+  padding: .3rem .8rem; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--ink-2); font-size: .9rem;
+}
+.section-nav a:hover { background: var(--surface-2); text-decoration: none; }
+.disclosure > summary { cursor: pointer; }
 
 .lock-badge {
   font-size: .72rem; font-weight: 600; letter-spacing: .02em;

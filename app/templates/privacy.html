@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Privacy Center - {{ app_name }}{% endblock %}
+{% block title %}Activity &amp; Diagnostics - {{ app_name }}{% endblock %}
 
 {% block content %}
 <div class="page-head">
   <div class="grow">
-    <h1>Privacy Center</h1>
+    <h1>Activity &amp; Diagnostics</h1>
     <p class="lede">
-      Review network controls, backup configuration, local storage, and the
-      content-free activity record for this installation.
+      What Local Scribe has done that could use the internet or change your data,
+      and tools for troubleshooting. Nothing here is uploaded automatically.
     </p>
   </div>
 </div>
@@ -28,36 +28,22 @@
   </section>
 
   <section class="card">
-    <h2>Backup configuration</h2>
-    {% if values.box_sync_destination %}
-      <p><span class="badge badge-ok">Configured</span> Local Box Sync folder</p>
-      <p class="mono small" style="overflow-wrap:anywhere">{{ values.box_sync_destination }}</p>
-      <p class="small muted">
-        Backups only run after an explicit project-level action. Local Scribe
-        cannot verify that Box Sync is healthy or that this location is approved.
-      </p>
+    <h2>Backup folders</h2>
+    {% if backup_summary.with_folder %}
+      <p><span class="badge badge-ok">{{ backup_summary.with_folder }} of {{ backup_summary.total }}</span>
+        {{ 'project has' if backup_summary.with_folder == 1 else 'projects have' }} a backup folder</p>
     {% else %}
-      <p><span class="badge">Not configured</span></p>
-      <p class="small muted">No backup folder is selected automatically.</p>
+      <p><span class="badge">None set</span></p>
     {% endif %}
-    <a class="btn btn-small" href="/settings#privacy-settings">Configure backup</a>
+    <p class="small muted">
+      Each project has its own backup folder, chosen on its project page, and a
+      backup only runs when you start it. Local Scribe verifies the copy it
+      writes; it cannot see whether Box has uploaded it or whether a folder is
+      approved for your data.
+    </p>
+    <a class="btn btn-small" href="/">Go to Projects</a>
   </section>
 </div>
-
-<section class="card">
-  <h2>Storage location</h2>
-  <p class="small muted">
-    Project data, downloaded models, logs, and settings remain in these local
-    locations. Paths are shown here for your reference; they are not included
-    in the sanitized diagnostics preview below.
-  </p>
-  <dl>
-    <dt>Projects</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.projects }}</dd>
-    <dt>Models</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.models }}</dd>
-    <dt>Logs</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.logs }}</dd>
-    <dt>Settings</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.settings }}</dd>
-  </dl>
-</section>
 
 <section class="card">
   <h2>Last online action</h2>
@@ -78,10 +64,10 @@
   <p class="small muted">
     A short log of things that can use the internet (<strong>Online</strong>:
     update checks, model downloads, Box Sync backups) and things that protect or
-    remove your data (<strong>Data safety</strong>: snapshots, deletions,
-    restores). The latest 200 events are kept on this computer only. Only the
-    kind of action is saved, never titles, file names, transcript text, or
-    paths; project names shown here are looked up when this page opens.
+    remove your data (<strong>Data safety</strong>: snapshots, backups,
+    deletions, restores). The latest 200 events are kept on this computer only.
+    Only the kind of action is saved, never titles, file names, transcript text,
+    or paths; project names shown here are looked up when this page opens.
   </p>
   {% if activities %}
   <div class="row" style="margin:.6rem 0">
@@ -124,15 +110,31 @@
      data-empty-network="No online activity is recorded. Update checks, model downloads and Box Sync backups appear here when they happen."
      data-empty-recovery="No snapshots, backups, restores or deletions are recorded yet. They appear here when they happen."></p>
   {% else %}
-  <p class="muted">No activity recorded yet.</p>
+  <p class="muted">No activity recorded yet. Update checks, model downloads, backups, snapshots and deletions will appear here.</p>
   {% endif %}
 </section>
 
-<section class="card" id="diagnostics">
-  <h2>Sanitized diagnostics</h2>
+<details class="card disclosure" id="storage-locations">
+  <summary><h2 style="display:inline">Storage locations</h2></summary>
+  <p class="small muted">
+    Project data, downloaded models, logs, and settings remain in these local
+    locations. Paths are shown here for your reference; they are not included
+    in the sanitized diagnostics preview.
+  </p>
+  <dl>
+    <dt>Projects</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.projects }}</dd>
+    <dt>Models</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.models }}</dd>
+    <dt>Logs</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.logs }}</dd>
+    <dt>Settings</dt><dd class="mono small" style="overflow-wrap:anywhere">{{ storage_paths.settings }}</dd>
+  </dl>
+</details>
+
+<details class="card disclosure" id="diagnostics">
+  <summary><h2 style="display:inline">Troubleshooting</h2></summary>
   <p>
-    The preview contains only app/runtime versions, privacy-setting states,
-    and basic engine status. It excludes recordings, media, transcript content,
+    If you are asked for diagnostics, generate a sanitized report here. The
+    preview contains only app and runtime versions, privacy-setting states, and
+    basic engine status. It excludes recordings, media, transcript content,
     tokens, project metadata, and user paths. Nothing is saved or sent
     automatically.
   </p>
@@ -150,7 +152,7 @@
   <button type="button" class="btn btn-primary" id="save-diagnostics" disabled>
     Save diagnostics JSON
   </button>
-</section>
+</details>
 {% endblock %}
 
 {% block scripts %}

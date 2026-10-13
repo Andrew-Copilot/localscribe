@@ -316,7 +316,7 @@ class WhisperEngine:
             raise EngineError(
                 f"{spec.label} is an Apple GPU (MLX) model and needs "
                 "MLX, which is not available on this machine. Choose a "
-                "different model in AI Settings, or install mlx-whisper "
+                "different model in Settings, or install mlx-whisper "
                 "(pip install -r requirements.txt) on Apple Silicon."
             )
 
@@ -325,7 +325,7 @@ class WhisperEngine:
             CONSOLE.warn(
                 f"{spec.label} does not support the Apple GPU (MLX) "
                 f"backend; running on {fallback.upper()} instead. Choose a "
-                "model labelled '(Apple GPU)' in AI Settings to use MLX.",
+                "model labelled '(Apple GPU)' in Settings to use MLX.",
                 model=model_key,
             )
             return fallback, None
@@ -339,13 +339,13 @@ class WhisperEngine:
         if spec is None:
             raise EngineError(
                 f"Model '{model_key}' is not in the catalogue. Choose a model "
-                "in AI Settings."
+                "in Settings."
             )
 
         snapshot = catalog.local_model_path(model_key)
         if snapshot is None:
             raise EngineError(
-                f"{spec.label} has not been downloaded yet. Open AI Settings "
+                f"{spec.label} has not been downloaded yet. Open Settings "
                 f"and download it ({spec.download_mb} MB), then try again."
             )
 
@@ -438,7 +438,7 @@ class WhisperEngine:
         if device == "mlx":
             return (
                 "The model could not load via MLX (Apple GPU). Set Device to "
-                "'cpu' in AI Settings to continue without the GPU, or check "
+                "'cpu' in Settings to continue without the GPU, or check "
                 "that mlx-whisper installed correctly "
                 "(pip install -r requirements.txt). "
                 f"Original error: {text}"
@@ -446,7 +446,7 @@ class WhisperEngine:
         if device == "cuda" and _is_missing_gpu_library(exc):
             return (
                 "The model could not load on the GPU because a CUDA support "
-                "library is missing. Use 'Install GPU support' in AI Settings, "
+                "library is missing. Use 'Install GPU support' in Settings, "
                 "or set Device to CPU to continue without the GPU. "
                 f"Original error: {text}"
             )
@@ -468,7 +468,7 @@ class WhisperEngine:
         if "unsupported" in lowered and "compute" in lowered:
             return (
                 f"Compute type '{compute}' is not supported on this hardware. "
-                "Set Compute type back to 'auto' in AI Settings. "
+                "Set Compute type back to 'auto' in Settings. "
                 f"Original error: {text}"
             )
         return f"The model could not be loaded: {text}"
@@ -623,7 +623,7 @@ class WhisperEngine:
         warning = (
             "The GPU is missing a CUDA support library (cuBLAS 12 or cuDNN 9), "
             "so transcription has switched to CPU for this session. Use "
-            "'Install GPU support' in AI Settings, then restart Local Scribe, "
+            "'Install GPU support' in Settings, then restart Local Scribe, "
             "to use the GPU. "
             f"Original error: {exc}"
         )

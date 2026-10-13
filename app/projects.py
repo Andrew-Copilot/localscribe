@@ -194,7 +194,7 @@ def new_project_record(title: str, **fields) -> dict:
         "consent_notes": "",
         "glossary": "",
         "vocabulary_profile_id": "",
-        "transcription_language": "",   # "" = use the AI Settings default
+        "transcription_language": "",   # "" = use the Settings default
         "operation": "",                 # "" = transcribe (projects made before this existed)
         "tags": [],
         "data_sensitivity": DEFAULT_SENSITIVITY,
@@ -214,7 +214,7 @@ def new_project_record(title: str, **fields) -> dict:
 
 
 def create_project(title: str, **fields) -> dict:
-    # A new project starts from the AI Settings default operation, saved
+    # A new project starts from the Settings default operation, saved
     # explicitly. Projects made earlier have no saved operation and stay on
     # Transcribe whatever that default later becomes.
     if fields.get("operation") in (None, ""):

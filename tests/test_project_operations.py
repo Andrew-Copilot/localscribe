@@ -136,9 +136,13 @@ def test_project_and_settings_controls_are_present():
     check("translation rejects an English-only model before queueing",
           "Translate to English needs a standard multilingual model" in catalog
           and "catalog.operation_problem(" in main)
-    check("Box path includes a browse action",
-          'id="browse-box-folder"' in settings_template
-          and "LS.post('/api/folder-picker'" in settings_js)
+    backup_js = (root / "app/static/js/backup.js").read_text(encoding="utf-8")
+    check("Browse for a backup folder is on the project page and uses the picker",
+          'id="backup-browse"' in project_template
+          and "LS.post('/api/folder-picker'" in backup_js)
+    check("the shared Box folder control is gone from Settings",
+          "browse-box-folder" not in settings_template
+          and "browse-box-folder" not in settings_js)
 
 
 def main() -> int:

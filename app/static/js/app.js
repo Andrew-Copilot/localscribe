@@ -159,7 +159,7 @@ const LS = (() => {
     } else if (!engine.model_downloaded) {
       cls = 'pill-error';
       label = 'No model';
-      detail = 'Download one in AI Settings';
+      detail = 'Download one in Settings';
     } else {
       cls = 'pill-unknown';
       label = 'AI linked, idle';
@@ -180,7 +180,7 @@ const LS = (() => {
     const rows = [
       ['State', e.detail || e.state],
       ['Selected model', e.selected_model_label || e.selected_model],
-      ['Downloaded', e.model_downloaded ? 'yes' : 'no - download it in AI Settings'],
+      ['Downloaded', e.model_downloaded ? 'yes' : 'no - download it in Settings'],
       ['Loaded model', e.loaded_model || 'not loaded'],
       ['Device', (e.loaded_device || e.target_device || '').toUpperCase()],
       ['Precision', e.loaded_compute || e.target_compute],
