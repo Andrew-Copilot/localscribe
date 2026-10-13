@@ -43,9 +43,11 @@
 </div>
 {% endif %}
 
+<section id="recovery-backup" aria-labelledby="recovery-backup-heading">
+<h2 id="recovery-backup-heading" class="section-heading">Recovery &amp; Backup</h2>
 <div class="card" id="recovery-card">
   <div class="row">
-    <h2>Recovery snapshots</h2>
+    <h3 style="margin:0">Recovery snapshots</h3>
     <span class="spacer"></span>
     <label class="chk">
       <input type="checkbox" id="snapshot-include-media" checked>
@@ -94,50 +96,86 @@
 </div>
 
 <div class="card" id="box-backup-card">
-  <h2>Box Sync backup</h2>
+  <h3>Backup folder for this project</h3>
   <p class="small muted">
-    This explicitly copies a checksummed project archive into the local folder
-    you configure. Local Scribe cannot confirm that Box Sync is running or that
-    a destination is approved. Box Sync handles its own sign-in and network sync.
+    This explicitly copies a checksummed project archive into a folder you
+    choose for <strong>this project only</strong>, normally inside your Box Sync
+    desktop folder. Nothing is copied unless you start a backup. Local Scribe
+    verifies the copy it writes; it cannot see whether Box has uploaded it or
+    whether the folder is approved for this data.
   </p>
-  {% if box_sync_configured %}
-  <div class="field">
-    <label class="chk">
-      <input type="checkbox" id="confirm-box-sync-destination">
-      I selected this folder from my existing U of I Box Sync client.
-    </label>
+
+  <div id="backup-folder" aria-live="polite">
+    <p class="small"><strong>Folder:</strong>
+      <span id="backup-folder-path" class="mono" style="overflow-wrap:anywhere"></span></p>
+    <p class="small" id="backup-folder-status" role="status"></p>
+    <div class="notice notice-info small" id="backup-legacy" hidden>
+      An earlier version saved one folder for every project. Local Scribe does not
+      apply it automatically.
+      <button type="button" class="btn btn-small" id="backup-use-previous">Use it for this project</button>
+    </div>
+    <div class="row">
+      <button type="button" class="btn btn-small" id="backup-browse">Browse&hellip;</button>
+      <button type="button" class="btn btn-small btn-quiet" id="backup-clear" hidden>Clear folder</button>
+    </div>
+    <details class="small" id="backup-manual" style="margin-top:.6rem">
+      <summary>Enter a folder path instead</summary>
+      <div class="row" style="margin-top:.4rem">
+        <label for="backup-path-input" class="sr-only">Backup folder path</label>
+        <input type="text" id="backup-path-input" style="flex:1;min-width:12rem"
+               autocomplete="off" spellcheck="false">
+        <button type="button" class="btn btn-small" id="backup-path-save">Save folder</button>
+      </div>
+    </details>
   </div>
-  <div class="field">
-    <label class="chk">
-      <input type="checkbox" id="confirm-box-health">
-      I independently verified that this destination is an approved Box Health
-      folder (required for PHI, potential PHI, or unknown data unless its root
-      name matches the documented heuristic).
-    </label>
+
+  <div id="backup-actions" hidden>
+    <h4>Back up now</h4>
+    <div class="field">
+      <label class="chk">
+        <input type="checkbox" id="confirm-box-sync-destination">
+        This folder belongs to my existing Box Sync client.
+      </label>
+    </div>
+    <div class="field" id="box-health-field" hidden>
+      <label class="chk">
+        <input type="checkbox" id="confirm-box-health">
+        I independently verified that this folder is approved for PHI,
+        potential PHI, or unclassified data (for the University of Iowa, a Box
+        Health folder). Local Scribe cannot check this from the folder name alone.
+      </label>
+    </div>
+    <div class="field">
+      <label class="chk">
+        <input type="checkbox" id="box-backup-include-media" checked>
+        Include original source media
+      </label>
+    </div>
+    <div class="row">
+      <button type="button" class="btn btn-primary" id="start-box-backup-btn">
+        Back up to this folder
+      </button>
+      <button type="button" class="btn btn-quiet" id="cancel-box-backup-btn" hidden>
+        Cancel backup
+      </button>
+      <span id="box-backup-status" class="small muted" role="status" aria-live="polite"></span>
+    </div>
   </div>
-  <div class="field">
-    <label class="chk">
-      <input type="checkbox" id="box-backup-include-media" checked>
-      Include original source media
-    </label>
+
+  <h4>Backup history</h4>
+  <p class="small muted" id="backup-history-empty">No backups have been made from this computer for this project.</p>
+  <div class="table-wrap" id="backup-history-wrap" hidden>
+    <table id="backup-history">
+      <thead><tr><th>When</th><th>Result</th><th>Local copy</th><th>Box upload</th></tr></thead>
+      <tbody></tbody>
+    </table>
   </div>
-  <div class="row">
-    <button type="button" class="btn btn-primary" id="start-box-backup-btn">
-      Back up to Box Sync
-    </button>
-    <button type="button" class="btn btn-quiet" id="cancel-box-backup-btn" hidden>
-      Cancel backup
-    </button>
-    <span id="box-backup-status" class="small muted" role="status" aria-live="polite"></span>
-  </div>
-  {% else %}
-  <p class="notice notice-info small">
-    No destination is configured. Set the path to a folder inside your existing
-    U of I Box Sync desktop folder in <a href="/settings">AI Settings</a>.
-    Local Scribe will not choose one for you.
+  <p class="small muted">
+    History stays on this computer and is not included in exported projects,
+    snapshots, or handoff packages.
   </p>
-  {% endif %}
 </div>
+</section>
 
 <!-- Project metadata: explicit save, unlike the transcript editor's autosave -->
 <form class="card" id="meta-form" hidden>
@@ -447,6 +485,7 @@
     slug: {{ project.slug|tojson }},
     projectId: {{ (project.project_id or project.slug)|tojson }},
     vocabularyProfileId: {{ (project.vocabulary_profile_id or '')|tojson }},
+    backup: {{ backup|tojson }},
     documents: {{ documents|tojson }},
     stats: {{ stats|tojson }},
     operation: {{ operation|tojson }},
@@ -454,4 +493,5 @@
   };
 </script>
 <script src="/static/js/project.js"></script>
+<script src="/static/js/backup.js"></script>
 {% endblock %}

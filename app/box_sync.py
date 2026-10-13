@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import threading
 import uuid
@@ -39,26 +40,89 @@ def _failure_message(exc: Exception) -> str:
     )
 
 
-def configured_destination() -> Path:
-    raw = config.SETTINGS.get("box_sync_destination")
+def check_destination(raw) -> Path:
+    """Validate a candidate backup folder and return its resolved path.
+
+    Only that the folder exists, is a folder, is writable and lies outside
+    Local Scribe's own storage; nothing here shows it is synchronized with Box
+    or approved by an institution.
+    """
     if not isinstance(raw, str) or not raw.strip():
-        raise BackupError("Configure a local Box Sync folder in AI Settings first.")
+        raise BackupError("Choose a backup folder for this project first.")
     try:
         path = Path(raw.strip()).expanduser()
     except (OSError, ValueError, RuntimeError) as exc:
-        raise BackupError("The configured Box Sync folder path is invalid.") from exc
+        raise BackupError("The backup folder path is invalid.") from exc
     if not path.is_absolute():
-        raise BackupError("The configured Box Sync folder must be an absolute path.")
+        raise BackupError("The backup folder must be an absolute path.")
     try:
         path = path.resolve(strict=True)
     except (OSError, ValueError, RuntimeError) as exc:
-        raise BackupError("The configured Box Sync folder is unavailable.") from exc
+        raise BackupError("The backup folder is unavailable.") from exc
     if not path.is_dir():
-        raise BackupError("The configured Box Sync location is not a folder.")
+        raise BackupError("The backup location is not a folder.")
     project_root = config.PATHS.projects.resolve()
     if path == project_root or project_root in path.parents:
-        raise BackupError("Choose a Box Sync folder outside Local Scribe's project storage.")
+        raise BackupError("Choose a backup folder outside Local Scribe's project storage.")
+    if not os.access(path, os.W_OK):
+        raise BackupError("The backup folder is not writable.")
     return path
+
+
+def configured_destination(slug: str) -> Path:
+    """This project's validated backup folder."""
+    return check_destination(projects.load_backup_record(slug)["destination"])
+
+
+def legacy_destination() -> str:
+    """The folder an earlier version saved for every project, or ""."""
+    raw = config.SETTINGS.get("box_sync_destination")
+    return raw.strip() if isinstance(raw, str) else ""
+
+
+def select_destination(slug: str, raw, selection: str = "manual") -> dict:
+    """Validate and save a folder for one project; any failure changes nothing."""
+    destination = check_destination(raw)
+    return projects.set_backup_destination(slug, destination, selection)
+
+
+def describe(slug: str) -> dict:
+    """What the project page shows about this project's backup folder and history.
+
+    The local copy is verified by checksum; whether Box has uploaded it is not
+    something Local Scribe can see, so remote_sync is always "unknown".
+    """
+    project = projects.load_project(slug)
+    record = projects.load_backup_record(slug)
+    destination = record["destination"]
+    state = {
+        "configured": bool(destination),
+        "destination": destination,
+        "selection": record["selection"],
+        "selected_at": record["selected_at"],
+        "available": False,
+        "problem": "",
+        "needs_box_health": False,
+        "legacy_available": bool(legacy_destination()) and not destination,
+        "remote_sync": "unknown",
+        "history": [
+            {**event, "remote_sync": "unknown"}
+            for event in reversed(record["history"])
+        ][:10],
+    }
+    if destination:
+        try:
+            resolved = check_destination(destination)
+        except BackupError as exc:
+            state["problem"] = str(exc)
+        else:
+            state["available"] = True
+            gate = future_backup_gate(
+                project.get("data_sensitivity"), resolved.name,
+                independently_verified_box_health=False,
+            )
+            state["needs_box_health"] = not gate.allowed
+    return state
 
 
 def validate_backup_request(
@@ -75,11 +139,8 @@ def validate_backup_request(
         raise BackupError(
             "Offline Lock is on. Turn it off before explicitly copying into a Box Sync folder."
         )
-    destination = configured_destination()
-    try:
-        project = projects.load_project(slug)
-    except projects.ProjectError:
-        raise
+    project = projects.load_project(slug)
+    destination = configured_destination(slug)
     gate = future_backup_gate(
         project.get("data_sensitivity"),
         destination.name,
@@ -88,7 +149,7 @@ def validate_backup_request(
     if not gate.allowed:
         raise BackupError(gate.reason)
     if gate.override_used:
-        projects.record_box_health_override(
+        projects.record_backup_attestation(
             slug,
             destination,
             independently_verified_box_health=True,
@@ -146,13 +207,17 @@ class BackupManager:
         self._jobs: dict[str, dict] = {}
 
     def _snapshot(self, job: dict) -> dict:
-        return {
+        snapshot = {
             key: job[key]
             for key in (
                 "job_id", "status", "stage", "bytes_copied", "total_bytes",
                 "verified", "filename", "error",
             )
         }
+        # Verification is of the local copy only; Local Scribe cannot see Box.
+        snapshot["local_copy_verified"] = bool(job["verified"])
+        snapshot["remote_sync"] = "unknown"
+        return snapshot
 
     def _prune(self) -> None:
         finished = [
@@ -219,13 +284,14 @@ class BackupManager:
         with self._lock:
             job = self._jobs[job_id]
         status = "failed"
+        final = {"status": "failed", "stage": "failed"}
         try:
             if job["cancel_event"].is_set():
                 raise projects.ProjectCancelled("Backup cancelled.")
             if config.SETTINGS.get("offline_lock"):
                 raise BackupError("Offline Lock was engaged; the backup was stopped.")
-            if configured_destination() != job["destination"]:
-                raise BackupError("The configured Box Sync folder changed; retry the backup.")
+            if configured_destination(job["slug"]) != job["destination"]:
+                raise BackupError("This project's backup folder changed; retry the backup.")
 
             def check_allowed() -> None:
                 if job["cancel_event"].is_set():
@@ -234,9 +300,9 @@ class BackupManager:
                     raise BackupError(
                         "Offline Lock was engaged; the backup was stopped."
                     )
-                if configured_destination() != job["destination"]:
+                if configured_destination(job["slug"]) != job["destination"]:
                     raise BackupError(
-                        "The configured Box Sync folder changed; retry the backup."
+                        "This project's backup folder changed; retry the backup."
                     )
 
             config.PATHS.logs.mkdir(parents=True, exist_ok=True)
@@ -274,46 +340,39 @@ class BackupManager:
                     lambda count: self._update(job_id, bytes_copied=count),
                     check_allowed,
                 )
-                self._update(
-                    job_id,
-                    status="complete",
-                    stage="complete",
-                    bytes_copied=copied,
-                    verified=True,
-                    error=None,
-                )
+                final = {
+                    "status": "complete",
+                    "stage": "complete",
+                    "bytes_copied": copied,
+                    "verified": True,
+                    "error": None,
+                }
                 status = "complete"
             finally:
                 shutil.rmtree(temporary_dir, ignore_errors=True)
         except projects.ProjectCancelled:
-            self._update(
-                job_id,
-                status="cancelled",
-                stage="cancelled",
-                error="Backup cancelled.",
-            )
+            final = {"status": "cancelled", "stage": "cancelled", "error": "Backup cancelled."}
             status = "cancelled"
         except BackupError as exc:
-            self._update(
-                job_id,
-                status="failed",
-                stage="failed",
-                error=str(exc),
-            )
+            final = {"status": "failed", "stage": "failed", "error": str(exc)}
         except Exception as exc:
             CONSOLE.error(f"Box Sync backup failed ({type(exc).__name__}).")
-            self._update(
-                job_id,
-                status="failed",
-                stage="failed",
-                error=_failure_message(exc),
-            )
+            final = {"status": "failed", "stage": "failed", "error": _failure_message(exc)}
         finally:
             activity.record(
                 "box_sync_backup",
                 job["project_id"],
                 status,
             )
+            projects.append_backup_event(job["slug"], {
+                "status": status,
+                "filename": job.get("filename") or "",
+                "total_bytes": job.get("total_bytes") or 0,
+                "local_copy_verified": status == "complete" and bool(final.get("verified")),
+                "destination_name": job["destination"].name,
+                "error": final.get("error") if status != "complete" else None,
+            })
+            self._update(job_id, **final)
 
     def get(self, slug: str, job_id: str | None = None) -> dict | None:
         with self._lock:

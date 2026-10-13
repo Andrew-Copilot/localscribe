@@ -54,12 +54,21 @@ must not exclude these artifacts or imply that derived data is automatically saf
 
 ## R05 local-copy behavior and limitations
 
-The destination is an optional absolute local folder path configured in AI
-Settings. No folder is selected automatically. Before each copy, the user must
+The destination is an optional absolute local folder path chosen separately for
+each project on the project page (Recovery & Backup: Browse, Change, Clear, or
+type a path). It is stored in a small versioned, machine-local
+`backup.local.json` inside the project folder that is never exported. No folder
+is selected automatically, and one project's folder never applies to another.
+A folder saved by an earlier version for all projects is only offered as an
+explicit "use it for this project" choice; it is not copied silently and the
+old setting is left in place. Before each copy, the user must
 confirm that the selected folder belongs to their existing Box Sync client.
 Local Scribe does not check Box Sync installation, synchronization state,
 institutional ownership, or approval; Box Sync handles its own authentication
-and any later network upload. Local Scribe never calls a Box service.
+and any later network upload. Local Scribe never calls a Box service. What is
+verified is the local copy (size and SHA-256 after writing); whether Box has
+uploaded it is always reported as unknown. Each project keeps a bounded local
+backup history (result, local-copy verification, folder name only).
 
 Each backup is an explicit action. It creates a versioned, checksummed project
 archive, copies it to the configured folder through a temporary partial file,

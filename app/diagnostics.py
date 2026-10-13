@@ -6,8 +6,7 @@ import platform
 import re
 from datetime import datetime, timezone
 
-from . import config
-
+from . import config, projects
 
 def build(engine_status: dict | None = None) -> dict:
     """Return only reviewed, non-content runtime facts for user inspection."""
@@ -41,7 +40,7 @@ def build(engine_status: dict | None = None) -> dict:
             ),
             "box_sync_backup_configured": bool(
                 config.SETTINGS.get("box_sync_destination")
-            ),
+            ) or projects.any_backup_destination(),
         },
         "engine": {
             "state": engine.get("state")

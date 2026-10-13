@@ -272,7 +272,7 @@ async def page_project(request: Request, slug: str):
                 )
                 if "recovery" in activity.groups(event.get("action"))
             ])[:10],
-            box_sync_configured=bool(SETTINGS.get("box_sync_destination")),
+            backup=box_sync.describe(slug),
             vocabulary_profiles=profiles,
             vocabulary_profile_available=any(
                 item["id"] == project.get("vocabulary_profile_id")
@@ -1237,6 +1237,64 @@ async def api_cancel_all():
 # ---------------------------------------------------------------------------
 # Import / export
 # ---------------------------------------------------------------------------
+
+@app.get("/api/projects/{slug}/backup")
+async def api_get_backup(slug: str):
+    try:
+        return {"backup": box_sync.describe(slug)}
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put("/api/projects/{slug}/backup")
+async def api_set_backup_destination(slug: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    destination = payload.get("destination") if isinstance(payload, dict) else None
+    selection = payload.get("selection") if isinstance(payload, dict) else None
+    if not isinstance(destination, str):
+        raise HTTPException(status_code=400, detail="Expected a 'destination' folder path.")
+    try:
+        box_sync.select_destination(
+            slug, destination, selection if selection in ("manual", "picker") else "manual"
+        )
+        state = box_sync.describe(slug)
+    except box_sync.BackupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record("network_settings_changed", projects.load_project(slug).get("project_id") or slug)
+    return {"backup": state}
+
+
+@app.delete("/api/projects/{slug}/backup")
+async def api_clear_backup_destination(slug: str):
+    try:
+        projects.clear_backup_destination(slug)
+        state = box_sync.describe(slug)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activity.record("network_settings_changed", projects.load_project(slug).get("project_id") or slug)
+    return {"backup": state}
+
+
+@app.post("/api/projects/{slug}/backup/use-previous-folder")
+async def api_use_previous_backup_folder(slug: str):
+    """Explicitly reuse the folder an earlier version saved for every project."""
+    previous = box_sync.legacy_destination()
+    if not previous:
+        raise HTTPException(status_code=409, detail="No earlier shared folder is saved.")
+    try:
+        box_sync.select_destination(slug, previous, "legacy_global")
+        state = box_sync.describe(slug)
+    except box_sync.BackupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"backup": state}
+
 
 @app.post("/api/projects/{slug}/box-backup")
 async def api_start_box_backup(slug: str, request: Request):

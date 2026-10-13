@@ -751,6 +751,7 @@ body.console-open .sticky-actions { bottom: calc(var(--console-h) + .5rem); }
   border-color: var(--accent-dark); background: var(--accent-soft); font-weight: 650;
 }
 .history-filter label:has(input:focus-visible) { outline: 3px solid var(--accent-dark); outline-offset: 2px; }
+.section-heading { margin: 1.4rem 0 .6rem; font-size: 1.25rem; }
 .history-day th {
   text-align: left; font-size: .82rem; color: var(--ink-2);
   background: var(--surface-2); padding: .35rem .6rem;

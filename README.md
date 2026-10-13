@@ -493,9 +493,11 @@ deferred for the project owner to do later. The automated recovery tests do not
 verify desktop UI behavior or an installed Box Sync client.
 
 Optional Box Sync backup copies an archive into a folder you explicitly
-configure in AI Settings and confirm on each project backup. Local Scribe does
-not select a folder automatically, authenticate with Box, or verify that Box
-Sync is running. Offline Lock blocks the copy. See the
+choose for that project (on the project page, under Recovery & Backup) and
+confirm on each backup. Local Scribe does not select a folder automatically,
+authenticate with Box, verify that Box Sync is running, or see whether Box has
+uploaded the copy; it verifies only the local copy it writes. Offline Lock
+blocks the copy. See the
 [Box Sync decision and backup notes](docs/box-sync-decision.md) for policy and
 limitations.
 

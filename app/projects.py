@@ -280,15 +280,122 @@ def save_project(slug: str, updates: dict) -> dict:
         return record
 
 
-def record_box_health_override(
+# ---------------------------------------------------------------------------
+# Per-project backup record (machine-local; never exported or imported)
+# ---------------------------------------------------------------------------
+
+BACKUP_FILE = "backup.local.json"
+BACKUP_RECORD_VERSION = 1
+BACKUP_HISTORY_LIMIT = 50
+_BACKUP_SELECTIONS = {"manual", "picker", "legacy_global"}
+_BACKUP_EVENT_STATUSES = {"complete", "failed", "cancelled"}
+
+
+def is_machine_local(name: str) -> bool:
+    """Files named *.local.json describe this computer and never travel in archives."""
+    return str(name).casefold().endswith(".local.json")
+
+
+def _empty_backup_record() -> dict:
+    return {
+        "version": BACKUP_RECORD_VERSION,
+        "destination": "",
+        "selection": "",
+        "selected_at": "",
+        "attestation": None,
+        "history": [],
+    }
+
+
+def _clean_backup_event(event) -> dict | None:
+    if not isinstance(event, dict) or event.get("status") not in _BACKUP_EVENT_STATUSES:
+        return None
+    cleaned = {
+        "finished_at": str(event.get("finished_at") or ""),
+        "status": event["status"],
+        "filename": str(event.get("filename") or ""),
+        "total_bytes": int(event["total_bytes"]) if isinstance(event.get("total_bytes"), int) else 0,
+        "local_copy_verified": event.get("local_copy_verified") is True,
+        "destination_name": str(event.get("destination_name") or ""),
+    }
+    if event.get("error"):
+        cleaned["error"] = str(event["error"])[:300]
+    return cleaned
+
+
+def _read_backup_file(path: Path) -> dict:
+    raw = read_json(path, None)
+    record = _empty_backup_record()
+    if not isinstance(raw, dict) or raw.get("version") != BACKUP_RECORD_VERSION:
+        return record
+    destination = raw.get("destination")
+    if isinstance(destination, str):
+        record["destination"] = destination
+        record["selection"] = raw.get("selection") if raw.get("selection") in _BACKUP_SELECTIONS else ""
+        record["selected_at"] = str(raw.get("selected_at") or "")
+    attestation = raw.get("attestation")
+    if isinstance(attestation, dict) and record["destination"]:
+        record["attestation"] = {
+            "confirmed_at": str(attestation.get("confirmed_at") or ""),
+            "destination_root": str(attestation.get("destination_root") or ""),
+        }
+    history = raw.get("history")
+    if isinstance(history, list):
+        record["history"] = [
+            event for event in map(_clean_backup_event, history) if event is not None
+        ][-BACKUP_HISTORY_LIMIT:]
+    return record
+
+
+def load_backup_record(slug: str) -> dict:
+    """The project's local backup record, or an empty one if absent or unreadable."""
+    return _read_backup_file(project_dir(slug) / BACKUP_FILE)
+
+
+def _write_backup_record(slug: str, record: dict) -> dict:
+    write_json(project_dir(slug) / BACKUP_FILE, record)
+    return record
+
+
+def set_backup_destination(slug: str, destination: Path, selection: str = "manual") -> dict:
+    """Save this project's backup folder; a changed folder drops any earlier attestation."""
+    if selection not in _BACKUP_SELECTIONS:
+        raise ProjectValidationError("Unknown destination selection source.")
+    destination = Path(destination)
+    if not destination.is_absolute():
+        raise ProjectValidationError("The backup folder must be an absolute path.")
+    with _LOCK:
+        load_project(slug)
+        record = load_backup_record(slug)
+        if record["destination"] != str(destination):
+            record["attestation"] = None
+        record["destination"] = str(destination)
+        record["selection"] = selection
+        record["selected_at"] = _now()
+        return _write_backup_record(slug, record)
+
+
+def clear_backup_destination(slug: str) -> dict:
+    """Forget this project's backup folder and attestation; history is kept."""
+    with _LOCK:
+        load_project(slug)
+        record = load_backup_record(slug)
+        record["destination"] = ""
+        record["selection"] = ""
+        record["selected_at"] = ""
+        record["attestation"] = None
+        return _write_backup_record(slug, record)
+
+
+def record_backup_attestation(
     slug: str, destination_root: Path, *, independently_verified_box_health: bool = False
 ) -> dict:
     """Record only the latest explicit attestation, not a reusable permission."""
     with _LOCK:
-        record = load_project(slug)
+        project = load_project(slug)
         destination_root = Path(destination_root)
         result = future_backup_gate(
-            record["data_sensitivity"], destination_root.name,
+            project["data_sensitivity"], destination_root.name,
             independently_verified_box_health=independently_verified_box_health,
         )
         if not result.override_used or not destination_root.is_absolute():
@@ -296,14 +403,40 @@ def record_box_health_override(
                 "An override requires explicit independent Box Health verification "
                 "for a PHI/unknown project and an absolute destination folder path."
             )
-        record["box_health_override"] = {
+        record = load_backup_record(slug)
+        record["attestation"] = {
             "confirmed_at": _now(),
             "destination_root": str(destination_root),
-            "independently_verified_box_health": True,
         }
-        record["updated"] = _now()
-        write_json(project_dir(slug) / PROJECT_FILE, record)
-        return record
+        if not record["destination"]:
+            record["destination"] = str(destination_root)
+        return _write_backup_record(slug, record)
+
+
+def any_backup_destination() -> bool:
+    """Whether any project on this computer has a backup folder (a yes/no only)."""
+    try:
+        entries = [entry for entry in PATHS.projects.iterdir() if entry.is_dir()]
+    except OSError:
+        return False
+    return any(_read_backup_file(entry / BACKUP_FILE)["destination"] for entry in entries)
+
+
+def append_backup_event(slug: str, event: dict) -> dict | None:
+    """Add one finished backup attempt to this project's local history."""
+    cleaned = _clean_backup_event(event)
+    if cleaned is None:
+        return None
+    with _LOCK:
+        try:
+            load_project(slug)
+            record = load_backup_record(slug)
+            cleaned["finished_at"] = cleaned["finished_at"] or _now()
+            record["history"] = (record["history"] + [cleaned])[-BACKUP_HISTORY_LIMIT:]
+            _write_backup_record(slug, record)
+        except (ProjectError, OSError):
+            return None
+        return cleaned
 
 
 def delete_project(slug: str) -> None:
@@ -829,7 +962,7 @@ def export_project(
         archive_name = relative.as_posix()
         if archive_name == MANIFEST_FILE:
             continue
-        if path.name.casefold() == "deidentification.local.json":
+        if is_machine_local(path.name):
             continue
         if any(part.casefold() in transient_directories for part in relative.parts):
             continue
@@ -844,6 +977,8 @@ def export_project(
         paths.append((path, archive_name))
 
     project_json = dict(record)
+    # A destination attestation is about this computer, not the project.
+    project_json.pop("box_health_override", None)
     project_json["project_id"] = project_id
     project_json["data_sensitivity"] = record.get(
         "data_sensitivity", DEFAULT_SENSITIVITY
@@ -1047,6 +1182,8 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
                     if name == MANIFEST_FILE:
                         continue
                     relative = _safe_archive_path(name)
+                    if is_machine_local(relative.name):
+                        continue
                     destination = stage / relative
                     if info.is_dir():
                         destination.mkdir(parents=True, exist_ok=True)
@@ -1073,6 +1210,8 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
                         "be imported."
                     )
                 record["slug"] = slug
+                # Archives from earlier versions carried this machine-specific record.
+                record.pop("box_health_override", None)
                 record["project_id"] = (
                     manifest.get("project_id") or record.get("project_id") or uuid4().hex
                 )
@@ -1117,6 +1256,12 @@ def import_project(archive_path: Path, mode: str = "rename") -> dict:
                     (stage / directory).mkdir(parents=True, exist_ok=True)
 
                 if target.exists():
+                    # Replacing a project here keeps this computer's backup folder and
+                    # history, but never an attestation, and nothing comes from the archive.
+                    carried = _read_backup_file(target / BACKUP_FILE)
+                    carried["attestation"] = None
+                    if carried["destination"] or carried["history"]:
+                        write_json(stage / BACKUP_FILE, carried)
                     backup = PATHS.projects / f".backup-{uuid4().hex}"
                     target.replace(backup)
                 try:
