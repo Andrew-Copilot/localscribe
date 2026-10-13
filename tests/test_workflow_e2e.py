@@ -86,6 +86,7 @@ def _normalise_docx_package(path: Path) -> None:
                 content = ET.tostring(root, encoding="utf-8", xml_declaration=True)
             normalized = zipfile.ZipInfo(info.filename, (2026, 1, 2, 3, 4, 6))
             normalized.compress_type = info.compress_type
+            normalized.create_system = 3  # ZipInfo defaults to 0 on Windows, 3 elsewhere
             normalized.external_attr = info.external_attr
             target.writestr(normalized, content)
     replacement.replace(path)
