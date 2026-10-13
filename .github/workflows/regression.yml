@@ -43,6 +43,7 @@ jobs:
             test_health \
             test_privacy_center \
             test_project_archives \
+            test_project_operations \
             test_proofread \
             test_range_media \
             test_realign \

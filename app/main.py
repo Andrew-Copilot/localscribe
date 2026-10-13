@@ -34,6 +34,7 @@ from . import (
     diagnostics,
     deidentification,
     exporters,
+    folder_picker,
     health,
     handoff,
     languages,
@@ -512,6 +513,25 @@ async def ws_console(websocket: WebSocket):
 @app.get("/api/settings")
 async def api_get_settings():
     return {"values": SETTINGS.all(), "schema": SETTINGS_SCHEMA}
+
+
+@app.post("/api/folder-picker")
+async def api_folder_picker(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    initial_path = payload.get("initial_path", "") if isinstance(payload, dict) else ""
+    try:
+        selected = await asyncio.to_thread(
+            folder_picker.choose_folder, str(initial_path or "")
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="A desktop folder picker is unavailable. Enter the folder path manually.",
+        ) from exc
+    return {"path": selected}
 
 
 @app.post("/api/settings")
