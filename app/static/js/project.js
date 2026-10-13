@@ -790,6 +790,26 @@
     });
   }
 
+  const openSnapshotFolderBtn = document.getElementById('open-snapshot-folder-btn');
+  if (openSnapshotFolderBtn) {
+    const note = document.getElementById('snapshot-folder-note');
+    openSnapshotFolderBtn.addEventListener('click', async () => {
+      openSnapshotFolderBtn.disabled = true;
+      try {
+        const result = await LS.post(
+          `/api/projects/${encodeURIComponent(slug)}/snapshots/open-folder`
+        );
+        note.textContent = result.opened
+          ? 'Opened this project\'s snapshot folder in your file manager.'
+          : `Could not open a file manager here. This project's snapshots are in: ${result.path}`;
+      } catch (err) {
+        note.textContent = err.message;
+      } finally {
+        openSnapshotFolderBtn.disabled = false;
+      }
+    });
+  }
+
   const restoreSnapshotBtn = document.getElementById('restore-snapshot-btn');
   if (restoreSnapshotBtn) {
     restoreSnapshotBtn.addEventListener('click', async () => {

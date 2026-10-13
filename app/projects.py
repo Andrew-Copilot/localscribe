@@ -687,6 +687,30 @@ def create_snapshot(
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def snapshot_media_state(path: Path) -> str:
+    """Whether an archive carries source media, from its own manifest.
+
+    "included" and "omitted" come from the manifest's includes_media flag and its
+    file list; "none" means the project had no recordings; "unknown" is a
+    version 1 or unreadable archive that cannot say.
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            manifest = json.loads(archive.read(MANIFEST_FILE).decode("utf-8"))
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+        return "unknown"
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("includes_media"), bool):
+        return "unknown"
+    if not manifest["includes_media"]:
+        return "omitted"
+    entries = manifest.get("files") if isinstance(manifest.get("files"), list) else []
+    has_media = any(
+        isinstance(entry, dict) and str(entry.get("path", "")).startswith("media/")
+        for entry in entries
+    )
+    return "included" if has_media else "none"
+
+
 def list_snapshots(slug: str) -> list[dict]:
     snapshot_dir = _snapshot_dir(slug)
     if not snapshot_dir.is_dir():
@@ -703,6 +727,7 @@ def list_snapshots(slug: str) -> list[dict]:
             "snapshot_id": path.name,
             "created": datetime.fromtimestamp(stat.st_mtime, timezone.utc).astimezone().isoformat(timespec="seconds"),
             "size_bytes": stat.st_size,
+            "media": snapshot_media_state(path),
         })
     return sorted(snapshots, key=lambda item: item["created"], reverse=True)
 

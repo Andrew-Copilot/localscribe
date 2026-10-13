@@ -305,6 +305,63 @@ def test_removal_dialog_has_explicit_outcomes():
           and "Choose Cancel to continue without" not in script)
 
 
+def test_snapshot_media_status_and_open_folder():
+    with project_root():
+        with patch("app.update_check.refresh_state_async"), patch.object(
+            config, "install_offline_guard"
+        ):
+            from app import main as web
+        project = projects.create_project("Synthetic snapshot folder")
+        slug = project["slug"]
+        projects.add_document(slug, "synthetic.wav", data=b"synthetic media")
+        empty = projects.create_project("Synthetic no recordings")
+
+        projects.create_snapshot(slug, include_media=True)
+        projects.create_snapshot(slug, include_media=False)
+        projects.create_snapshot(empty["slug"], include_media=True)
+        media = sorted(item["media"] for item in projects.list_snapshots(slug))
+        check("snapshots say whether source media is included, from their manifest",
+              media == ["included", "omitted"], str(media))
+        check("a project without recordings is described as such",
+              projects.list_snapshots(empty["slug"])[0]["media"] == "none")
+        legacy = projects._snapshot_dir(slug) / "legacy-20200101-000000-aaaaaaaa.lsproj"
+        with zipfile.ZipFile(legacy, "w") as bundle:
+            bundle.writestr("project.json", "{}")
+        check("an older or unreadable archive is reported as unknown, not guessed",
+              next(s for s in projects.list_snapshots(slug)
+                   if s["snapshot_id"] == legacy.name)["media"] == "unknown")
+        legacy.unlink()
+
+        opened = []
+
+        async def exercise():
+            from fastapi import HTTPException
+
+            with patch.object(projects, "reveal", lambda path: opened.append(Path(path)) or True):
+                result = await web.api_open_snapshot_folder(slug)
+            check("the project's own snapshot folder is opened",
+                  result["opened"] and opened == [projects._snapshot_dir(slug)])
+            with patch.object(projects, "reveal", lambda path: False):
+                result = await web.api_open_snapshot_folder(slug)
+            check("if no file manager can open it, the path is returned as a fallback",
+                  result["opened"] is False and result["path"] == str(projects._snapshot_dir(slug)))
+            for label, target, status in (
+                ("a project with no snapshots", projects.create_project("Synthetic bare")["slug"], 409),
+                ("an unknown project", "no-such-project", 404),
+                ("a traversal attempt", "..", 404),
+            ):
+                try:
+                    await web.api_open_snapshot_folder(target)
+                except HTTPException as exc:
+                    check(f"{label} opens nothing ({status})", exc.status_code == status)
+                else:
+                    check(f"{label} opens nothing ({status})", False)
+            check("opening never used another project's folder",
+                  all(path == projects._snapshot_dir(slug) for path in opened))
+
+        asyncio.run(exercise())
+
+
 def main() -> int:
     for test in (
         test_snapshot_and_restore_choices,
@@ -315,6 +372,7 @@ def main() -> int:
         test_archive_entries_use_forward_slashes,
         test_failed_snapshot_blocks_deletion,
         test_removal_dialog_has_explicit_outcomes,
+        test_snapshot_media_status_and_open_folder,
     ):
         print(f"\n{test.__name__}")
         test()

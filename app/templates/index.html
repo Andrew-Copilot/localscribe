@@ -108,7 +108,8 @@
         {% for snapshot in snapshots %}
         <option value="{{ snapshot.snapshot_id }}" data-slug="{{ snapshot.project_slug }}">
           {{ snapshot.project_slug }} · {{ snapshot.created[:19].replace('T', ' ') }} ·
-          {{ '{:,}'.format(snapshot.size_bytes) }} bytes
+          {{ '{:,}'.format(snapshot.size_bytes) }} bytes ·
+          {{ {'included': 'source media included', 'omitted': 'source media omitted', 'none': 'no recordings', 'unknown': 'media not recorded (older snapshot)'}[snapshot.media] }}
         </option>
         {% endfor %}
       </select>

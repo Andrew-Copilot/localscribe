@@ -1345,6 +1345,28 @@ async def api_cancel_box_backup(slug: str, job_id: str):
     return {"cancel_requested": True}
 
 
+@app.post("/api/projects/{slug}/snapshots/open-folder")
+async def api_open_snapshot_folder(slug: str):
+    """Show this project's own snapshot folder in the file manager.
+
+    The path is derived from the project, never taken from the request, so only
+    that one folder can be opened. If the file manager cannot be launched the
+    path is returned so it can be opened by hand.
+    """
+    try:
+        project = projects.load_project(slug)
+    except projects.ProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    folder = projects._snapshot_dir(project["slug"])
+    if not folder.is_dir() or not projects.list_snapshots(project["slug"]):
+        raise HTTPException(
+            status_code=409,
+            detail="This project has no snapshots yet. Create one first.",
+        )
+    opened = await asyncio.to_thread(projects.reveal, folder)
+    return {"opened": bool(opened), "path": str(folder)}
+
+
 @app.get("/api/projects/{slug}/snapshots")
 async def api_list_snapshots(slug: str):
     try:

@@ -65,7 +65,8 @@
       <select id="snapshot-select">
         {% for snapshot in snapshots %}
         <option value="{{ snapshot.snapshot_id }}">
-          {{ snapshot.created[:19].replace('T', ' ') }} · {{ '{:,}'.format(snapshot.size_bytes) }} bytes
+          {{ snapshot.created[:19].replace('T', ' ') }} · {{ '{:,}'.format(snapshot.size_bytes) }} bytes ·
+          {{ {'included': 'source media included', 'omitted': 'source media omitted', 'none': 'no recordings', 'unknown': 'media not recorded (older snapshot)'}[snapshot.media] }}
         </option>
         {% endfor %}
       </select>
@@ -81,8 +82,11 @@
     <div class="field" style="align-self:end">
       <button type="button" class="btn" id="restore-snapshot-btn"
         {% if not snapshots %}disabled{% endif %}>Restore selected snapshot</button>
+      <button type="button" class="btn btn-quiet" id="open-snapshot-folder-btn"
+        {% if not snapshots %}disabled{% endif %}>Open snapshot folder</button>
     </div>
   </div>
+  <p class="small muted" id="snapshot-folder-note" role="status" aria-live="polite"></p>
   <h3>Recent recovery activity</h3>
   {% if activities %}
   <ul class="small">
