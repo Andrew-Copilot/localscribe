@@ -181,6 +181,13 @@ def test_activity_page_renders_filters_and_stays_content_free():
           'data-groups="network recovery"' in page and ">Failed<" in page)
     check("the filter script is loaded before the page script",
           page.index("/static/js/history.js") < page.index("/static/js/privacy.js"))
+    client = TestClient(main.app)
+    asset = client.get("/static/js/privacy.js")
+    check("scripts revalidate instead of being reused by heuristic freshness",
+          asset.headers.get("cache-control") == "no-cache" and bool(asset.headers.get("etag")))
+    check("a conditional request gets a cheap 304",
+          client.get("/static/js/privacy.js",
+                     headers={"If-None-Match": asset.headers["etag"]}).status_code == 304)
 
 
 def main() -> int:

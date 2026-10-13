@@ -123,6 +123,10 @@ async def same_origin_guard(request: Request, call_next):
     # Never advertise cross-origin access, and keep the app out of caches.
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
+    # Static files carry Last-Modified but no freshness lifetime, so browsers reuse
+    # an old copy by heuristic and a fixed template runs with stale JS/CSS.
+    # no-cache still allows cheap ETag revalidation (a 304) on every load.
+    response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
 
