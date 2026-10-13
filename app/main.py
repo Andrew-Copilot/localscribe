@@ -2034,7 +2034,7 @@ async def api_download_all(slug: str, doc_id: str):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in files:
-            archive.write(path, f"{stem}/{path.name}")
+            projects.write_zip_file(archive, path, f"{stem}/{path.name}")
     buffer.seek(0)
 
     name = f"{projects.slugify(stem, 'transcript')}-transcripts.zip"

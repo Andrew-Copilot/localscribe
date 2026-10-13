@@ -232,7 +232,7 @@ def create_package(
         with zipfile.ZipFile(package_path, "x", compression=zipfile.ZIP_DEFLATED) as archive:
             for name, data in payloads.items():
                 if isinstance(data, Path):
-                    archive.write(data, name)
+                    projects.write_zip_file(archive, data, name)
                 else:
                     archive.writestr(name, data)
             archive.writestr("manifest.json", json.dumps(manifest, indent=2))

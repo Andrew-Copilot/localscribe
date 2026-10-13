@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
+import zipfile
 from contextlib import contextmanager
 from dataclasses import replace
 from io import BytesIO
@@ -29,7 +30,7 @@ def check(label: str, condition: bool, detail: str = "") -> None:
 
 @contextmanager
 def project_root():
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         paths = replace(
             config.PATHS, projects=root / "projects", logs=root / "logs",
@@ -239,6 +240,21 @@ def test_overwrite_import_requires_snapshot_choice():
         asyncio.run(exercise())
 
 
+def test_archive_entries_use_forward_slashes():
+    with project_root():
+        project = projects.create_project("Synthetic zip names")
+        slug = project["slug"]
+        projects.add_document(slug, "synthetic.wav", data=b"synthetic media")
+        archive = projects.export_project(slug, config.PATHS.logs)
+        with zipfile.ZipFile(archive) as bundle:
+            stored = [info.orig_filename for info in bundle.infolist()]
+            check("archive entries are stored with forward slashes",
+                  stored and all("\\" not in name for name in stored), str(stored))
+            check("media entries are present and readable",
+                  any(name.startswith("media/") for name in stored)
+                  and bundle.testzip() is None)
+
+
 def main() -> int:
     for test in (
         test_snapshot_and_restore_choices,
@@ -246,6 +262,7 @@ def main() -> int:
         test_activity_is_bounded_and_filtered,
         test_deleted_project_can_be_restored,
         test_overwrite_import_requires_snapshot_choice,
+        test_archive_entries_use_forward_slashes,
     ):
         print(f"\n{test.__name__}")
         test()

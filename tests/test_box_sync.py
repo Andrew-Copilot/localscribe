@@ -44,7 +44,7 @@ def check(label: str, condition: bool, detail: str = "") -> None:
 
 @contextmanager
 def backup_context(*, classification="no_phi", offline_lock=False):
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         projects_root = root / "projects"
         logs = root / "logs"

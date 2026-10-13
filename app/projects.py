@@ -751,6 +751,25 @@ def list_outputs(slug: str, doc_id: str) -> list:
 # Import / export
 # ---------------------------------------------------------------------------
 
+def zip_info_for(path: Path, archive_name: str, compress_type: int) -> zipfile.ZipInfo:
+    """A ZipInfo whose stored name is exactly archive_name.
+
+    ZipInfo.from_file normalises names with os.sep, leaving backslashes in
+    orig_filename on Windows; the archive then fails its own read-back.
+    """
+    info = zipfile.ZipInfo.from_file(path, archive_name)
+    info.filename = archive_name
+    info.orig_filename = archive_name
+    info.compress_type = compress_type
+    return info
+
+
+def write_zip_file(archive: zipfile.ZipFile, path: Path, archive_name: str) -> None:
+    info = zip_info_for(path, archive_name, archive.compression)
+    with path.open("rb") as source, archive.open(info, "w") as target:
+        shutil.copyfileobj(source, target, 1024 * 1024)
+
+
 def export_project(
     slug: str,
     dest_dir: Path | None = None,
@@ -855,15 +874,13 @@ def export_project(
                                 ),
                             )
                         else:
-                            info = zipfile.ZipInfo.from_file(path, archive_name)
-                            info.compress_type = archive.compression
+                            info = zip_info_for(path, archive_name, archive.compression)
                             with path.open("rb") as source, archive.open(info, "w") as target:
                                 for chunk in iter(lambda: source.read(1024 * 1024), b""):
                                     check_cancelled()
                                     target.write(chunk)
                     else:
-                        info = zipfile.ZipInfo.from_file(path, archive_name)
-                        info.compress_type = archive.compression
+                        info = zip_info_for(path, archive_name, archive.compression)
                         with path.open("rb") as source, archive.open(info, "w") as target:
                             for chunk in iter(lambda: source.read(1024 * 1024), b""):
                                 check_cancelled()
