@@ -28,6 +28,12 @@ GOLDENS = FIXTURES / "workflow-golden"
 FIXED_TIME = "2026-01-02T03:04:05+00:00"
 FORMATS = ["srt", "vtt", "docx", "json"]
 FAILURES: list[str] = []
+_write_text = Path.write_text
+
+
+def _lf_write_text(self, data, encoding=None, errors=None, newline=None):
+    # Archive hashes in the golden manifest must not depend on the host's CRLF/LF default.
+    return _write_text(self, data, encoding=encoding, errors=errors, newline="\n")
 
 
 def check(label: str, condition: bool, detail: str = "") -> None:
@@ -56,6 +62,7 @@ def isolated_project_root():
             patch.object(projects, "new_document_id", return_value="fixture-document"),
             patch.object(transcript, "_now", return_value=FIXED_TIME),
             patch.object(realign, "_now", return_value=FIXED_TIME),
+            patch.object(Path, "write_text", _lf_write_text),
         ):
             yield root
 
@@ -79,6 +86,7 @@ def _normalise_docx_package(path: Path) -> None:
                 content = ET.tostring(root, encoding="utf-8", xml_declaration=True)
             normalized = zipfile.ZipInfo(info.filename, (2026, 1, 2, 3, 4, 6))
             normalized.compress_type = info.compress_type
+            normalized.create_system = 3  # ZipInfo defaults to 0 on Windows, 3 elsewhere
             normalized.external_attr = info.external_attr
             target.writestr(normalized, content)
     replacement.replace(path)
